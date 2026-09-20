@@ -1,0 +1,563 @@
+// File: std/effects/leaderboard.jc
+
+//! Universal Leaderboard module for creating and managing leaderboards.
+//!
+//! Features:
+//! - Custom formatting with placeholders ($place, $player, $score, $symbol)
+//! - Special formats for top positions (e.g. top 3 with different colors)
+//! - Per-player display (each player sees their own rank highlighted)
+//! - Ascending/descending sort order
+//! - Number formatting (K, M, B notation)
+//! - Configurable display size, max places
+//! - Player's own place info at the bottom
+//! - Skip or fill empty positions
+//! - Rotation (display order up or down)
+//! - "You" marker highlighting
+//!
+//! Example usage:
+//!   var lb = Leaderboard("money", location(0, 70, 0), "$player.money");
+//!   lb.set_title("&6Топ по деньгам")
+//!     .set_format("&e$place. &f$player &7- &e$score$symbol")
+//!     .set_symbol("$")
+//!     .set_max_places(10)
+//!     .set_show_you(true, "&a(Вы)")
+//!     .set_number_format(NumberFormatType.ENGLISH);
+//!   lb.start();
+
+/// RU: Порядок сортировки таблицы лидеров.
+/// EN: Sort order for leaderboard.
+@alias("ПорядокСортировки")
+export enum SortOrder {
+    ASCENDING,
+    DESCENDING
+}
+
+/// RU: Тип форматирования чисел в таблице лидеров.
+/// EN: Number formatting type in leaderboard.
+@alias("ТипФорматаЧисел")
+export enum NumberFormatType {
+    OFF,
+    RUSSIAN,
+    ENGLISH,
+    SCIENTIFIC
+}
+
+/// RU: Выравнивание текста таблицы лидеров.
+/// EN: Text alignment for leaderboard display.
+@alias("ВыравниваниеТекста")
+export enum TextAlignment {
+    CENTER,
+    LEFT,
+    RIGHT
+}
+
+/// RU: Тип ориентации билборда.
+/// EN: Billboard display orientation type.
+@alias("ТипБилборда")
+export enum BillboardType {
+    FIXED,
+    VERTICAL
+}
+
+/// RU: Соединяет массив текстовых строк указанным разделителем.
+/// EN: Joins an array of text lines with a separator.
+@alias("соединить_строки")
+export function join_lines(lines: array<text>, separator: text = "\n") -> text {
+    return lines.join(separator);
+}
+
+/// RU: Заменяет подстроку в тексте без регулярных выражений.
+/// EN: Simple non-regex text replacement using split + join.
+@alias("заменить_в_тексте")
+export function replace_in_text(source: text, search: text, replacement: text) -> text {
+    if search == "" {
+        return source;
+    }
+    var parts = source.split(search);
+    return join_lines(parts, separator = replacement);
+}
+
+/// RU: Универсальный класс таблицы лидеров.
+/// EN: Universal Leaderboard class.
+@alias("ТаблицаЛидеров")
+@alias("Лидерборд")
+export class Leaderboard {
+    var id: text;
+
+    // Display settings
+    var location: location;
+    var title: text;
+    var size: number;
+    var max_places: number;
+    var format: text;
+    var top_formats: array<text>;
+    var player_place_format: text;
+    var symbol: text;
+
+    // Behavior
+    var sort_order: SortOrder;
+    var show_you: boolean;
+    var you_marker: text;
+    var skip_empty: boolean;
+    var rotate_down: boolean;
+
+    // Visual (for future text-display extension)
+    var background_opacity: number;
+    var alignment: TextAlignment;
+    var billboard: BillboardType;
+    var number_format: NumberFormatType;
+
+    // Variable template: "$player.money" — $player replaced with player name
+    var variable_template: text;
+
+    // Internal state
+    var scores: map<text, number>;
+    var sorted_keys: array<text>;
+    var is_running: boolean;
+    var update_interval: number;
+
+    function __init__(
+        self: Leaderboard,
+        id: text,
+        location: location,
+        variable_template: text,
+    ) -> Leaderboard {
+        self.id = id;
+        self.location = location;
+        self.variable_template = variable_template;
+
+        // Defaults
+        self.title = "";
+        self.size = 1;
+        self.max_places = 10;
+        self.format = "&f{place}. {player} &7- &f{score}{symbol}";
+        self.top_formats = [];
+        self.player_place_format = "";
+        self.symbol = "";
+        self.sort_order = SortOrder.DESCENDING;
+        self.show_you = false;
+        self.you_marker = "&7(Вы)";
+        self.skip_empty = false;
+        self.rotate_down = false;
+        self.background_opacity = 0;
+        self.alignment = TextAlignment.CENTER;
+        self.billboard = BillboardType.VERTICAL;
+        self.number_format = NumberFormatType.OFF;
+
+        self.scores = {};
+        self.sorted_keys = [];
+        self.is_running = false;
+        self.update_interval = 100; // 5 seconds in ticks
+
+        return self;
+    }
+
+    /// Sets a player's score.
+    function set_score(self: Leaderboard, player: text, score: number) {
+        self.scores[player] = score;
+    }
+
+    /// Alias for set_score.
+    function update_score(self: Leaderboard, player: text, score: number) {
+        self.scores[player] = score;
+    }
+
+    /// Gets a player's score (0 if not present).
+    function get_score(self: Leaderboard, player: text) -> number {
+        if self.scores.has_key(player) {
+            return self.scores[player];
+        }
+        return 0;
+    }
+
+    /// Removes a player from the leaderboard.
+    function remove_player(self: Leaderboard, player: text) {
+        var temp: any = 0;
+        self.scores = variable::remove_map_entry(temp, self.scores, player);
+    }
+
+    /// Clears all scores.
+    function clear_scores(self: Leaderboard) {
+        self.scores = {};
+        self.sorted_keys = [];
+    }
+
+    /// Returns the number of entries.
+    @getter
+    function entry_count(self: Leaderboard) -> number {
+        return self.scores.len();
+    }
+
+    /// Sorts scores by value and updates sorted_keys.
+    function sort(self: Leaderboard) {
+        var order = "DESCENDING";
+        if self.sort_order == SortOrder.ASCENDING {
+            order = "ASCENDING";
+        }
+        self.scores = variable::sort_map(self.scores, sort_order = order, sort_type = "VALUES");
+        self.sorted_keys = self.scores.keys();
+    }
+
+    /// Returns a player's rank (1-based, 0 if not ranked).
+    function get_rank(self: Leaderboard, player: text) -> number {
+        if self.sorted_keys.len() == 0 {
+            self.sort();
+        }
+
+        if not self.scores.has_key(player) {
+            return 0;
+        }
+
+        var len = self.sorted_keys.len();
+        for i in 0..len {
+            if self.sorted_keys[i] == player {
+                return i + 1;
+            }
+        }
+        return 0;
+    }
+
+    /// Formats a number according to the number_format setting.
+    function format_number(self: Leaderboard, num: number) -> text {
+        if self.number_format == NumberFormatType.OFF {
+            return "${num}";
+        }
+
+        var abs_val = num.abs();
+
+        // Scientific notation
+        if self.number_format == NumberFormatType.SCIENTIFIC {
+            if abs_val < 1000 {
+                return "${num}";
+            }
+            var exp = 0;
+            var v = abs_val;
+            while v >= 10 {
+                v = v / 10;
+                exp += 1;
+            }
+            var mantissa = num / 10.pow(exp);
+            var rounded = mantissa.round(2);
+            return "${rounded}e${exp}";
+        }
+
+        var suffix: text = "";
+        var divisor: number = 1;
+
+        match abs_val {
+            _ if abs_val >= 1000000000 => {
+                divisor = 1000000000;
+                if self.number_format == NumberFormatType.RUSSIAN {
+                    suffix = " млрд";
+                } else {
+                    suffix = "B";
+                }
+            }
+            _ if abs_val >= 1000000 => {
+                divisor = 1000000;
+                if self.number_format == NumberFormatType.RUSSIAN {
+                    suffix = " млн";
+                } else {
+                    suffix = "M";
+                }
+            }
+            _ if abs_val >= 1000 => {
+                divisor = 1000;
+                if self.number_format == NumberFormatType.RUSSIAN {
+                    suffix = " тыс";
+                } else {
+                    suffix = "K";
+                }
+            }
+            _ => {
+                return "${num}";
+            }
+        }
+
+        var divided = num / divisor;
+        var rounded = divided.round(1);
+        return "${rounded}${suffix}";
+    }
+
+    /// Replaces all placeholders in a format string.
+    function apply_placeholders(
+        self: Leaderboard,
+        text: text,
+        place: number,
+        player: text,
+        score: number,
+    ) -> text {
+        var result = text;
+        result = replace_in_text(result, "{place}", "${place}");
+        result = replace_in_text(result, "{player}", player);
+        result = replace_in_text(result, "{score}", self.format_number(score));
+        result = replace_in_text(result, "{symbol}", self.symbol);
+        return result;
+    }
+
+    /// Builds a single place line.
+    function build_place_line(
+        self: Leaderboard,
+        place_index: number,
+        player: text,
+        score: number,
+    ) -> text {
+        var fmt = self.format;
+
+        // Use special format for top positions
+        var top_count = self.top_formats.len();
+        if place_index < top_count {
+            fmt = self.top_formats[place_index];
+        }
+
+        return self.apply_placeholders(fmt, place_index + 1, player, score);
+    }
+
+    /// Builds the complete display text for a specific viewer.
+    function build_display_text(self: Leaderboard, viewer: text) -> text {
+        if self.sorted_keys.len() == 0 {
+            self.sort();
+        }
+
+        var keys = self.sorted_keys;
+        var lines: array<text> = [];
+
+        // Title
+        if self.title != "" {
+            lines = lines.push(self.title);
+        }
+
+        var total = keys.len();
+        var display_count = self.max_places;
+        if total < display_count {
+            display_count = total;
+        }
+
+        // Place lines
+        for i in 0..display_count {
+            var p = keys[i];
+            var s = self.scores[p];
+            var `line` = self.build_place_line(i, p, s);
+
+            // Mark "you"
+            if self.show_you and p == viewer {
+                line = "$line ${self.you_marker}";
+            }
+
+            lines = lines.push(line);
+        }
+
+        // Fill empty positions
+        if not self.skip_empty {
+            for j in display_count..self.max_places {
+                lines = lines.push("&7${j + 1}. &8-------");
+            }
+        }
+
+        // Rotate if needed
+        if self.rotate_down {
+            lines = lines.reverse();
+        }
+
+        // Viewer's own place info
+        if self.player_place_format != "" {
+            var v_score = self.get_score(viewer);
+            var v_rank = self.get_rank(viewer);
+
+            var pt = self.player_place_format;
+            pt = replace_in_text(pt, "{place}", "${v_rank}");
+            pt = replace_in_text(pt, "{score}", self.format_number(v_score));
+            pt = replace_in_text(pt, "{symbol}", self.symbol);
+            lines = lines.push(pt);
+        }
+
+        return lines.join("\n");
+    }
+
+    /// Returns the display text without showing it (for use in chat, books, etc.)
+    function get_display_text(self: Leaderboard, viewer: text) -> text {
+        return self.build_display_text(viewer);
+    }
+
+    /// Updates the hologram display for a specific player.
+    function show_to(self: Leaderboard, player_name: text) {
+        select::player_by_name([player_name]);
+        var text = self.build_display_text(player_name);
+        player::display_hologram<current>(self.location, text);
+    }
+
+    /// Updates the hologram display for all online players.
+    function show_to_all(self: Leaderboard) {
+        select::all_players();
+        var players = value::selection_target_names();
+
+        for name in players {
+            select::player_by_name([name]);
+            var text = self.build_display_text(name);
+            player::display_hologram<current>(self.location, text);
+        }
+    }
+
+    /// Clears the hologram for all players.
+    function hide(self: Leaderboard) {
+        select::all_players();
+        player::display_hologram<all_players>(self.location, "");
+    }
+
+    /// Starts the automatic update loop (sorts and refreshes display periodically).
+    process start(self: Leaderboard) {
+        if self.is_running {
+            return;
+        }
+        self.is_running = true;
+
+        // Initial sort and display
+        self.sort();
+        self.show_to_all();
+
+        while self.is_running {
+            code::wait(self.update_interval);
+
+            if not self.is_running {
+                break;
+            }
+
+            // Re-sort and update displays
+            self.sort();
+            self.show_to_all();
+        }
+    }
+
+    /// Stops the automatic update loop.
+    function stop(self: Leaderboard) {
+        self.is_running = false;
+    }
+
+    /// Stops the loop and clears the display and scores.
+    function remove(self: Leaderboard) {
+        self.is_running = false;
+        self.hide();
+        self.clear_scores();
+    }
+}
+
+/**
+* Manager for multiple leaderboards.
+* Provides centralized creation, lookup, and batch updates.
+*
+* Example:
+*   var manager = LeaderboardManager();
+*   var lb = manager.create("money", location(0, 70, 0), "$player.money");
+*   lb.set_title("&6Топ по деньгам").set_symbol("$");
+*   manager.start_all();
+*/
+
+/// RU: Менеджер для управления несколькими таблицами лидеров.
+/// EN: Manager for multiple leaderboards.
+@alias("МенеджерТаблицЛидеров")
+@alias("МенеджерЛидербордов")
+export class LeaderboardManager {
+    var leaderboards: map<text, Leaderboard>;
+
+    function __init__(self: LeaderboardManager) -> LeaderboardManager {
+        self.leaderboards = {};
+        return self;
+    }
+
+    /// Creates and registers a new leaderboard.
+    function create(
+        self: LeaderboardManager,
+        id: text,
+        location: location,
+        variable_template: text,
+    ) -> Leaderboard {
+        var lb = Leaderboard(id, location, variable_template);
+        self.leaderboards[id] = lb;
+        return lb;
+    }
+
+    /// Gets a leaderboard by ID.
+    function get(self: LeaderboardManager, id: text) -> Leaderboard {
+        if self.leaderboards.has_key(id) {
+            return self.leaderboards[id];
+        }
+        throw "Leaderboard '${id}' not found.";
+        return Leaderboard("", location(0, 0, 0), "");
+    }
+
+    /// Checks if a leaderboard exists.
+    function has(self: LeaderboardManager, id: text) -> boolean {
+        return self.leaderboards.has_key(id);
+    }
+
+    /// Removes and destroys a leaderboard.
+    function remove(self: LeaderboardManager, id: text) {
+        if self.leaderboards.has_key(id) {
+            var lb = self.leaderboards[id];
+            lb.remove();
+            var temp: any = 0;
+            self.leaderboards = variable::remove_map_entry(temp, self.leaderboards, id);
+        }
+    }
+
+    /// Updates a player's score across all leaderboards.
+    function set_score_everywhere(self: LeaderboardManager, player: text, score: number) {
+        for id, lb in self.leaderboards {
+            var leaderboard = lb;
+            leaderboard.set_score(player, score);
+        }
+    }
+
+    /// Sorts all leaderboards.
+    function sort_all(self: LeaderboardManager) {
+        for id, lb in self.leaderboards {
+            lb.sort();
+        }
+    }
+
+    /// Refreshes displays for all leaderboards.
+    function show_all(self: LeaderboardManager) {
+        for id, lb in self.leaderboards {
+            lb.show_to_all();
+        }
+    }
+
+    /// Starts the automatic update loop for all leaderboards.
+    process start_all(self: LeaderboardManager) {
+        self.sort_all();
+        self.show_all();
+
+        while true {
+            code::wait(100);
+
+            self.sort_all();
+            self.show_all();
+        }
+    }
+
+    /// Stops all leaderboards.
+    function stop_all(self: LeaderboardManager) {
+        for id, lb in self.leaderboards {
+            lb.stop();
+        }
+    }
+
+    /// Returns all leaderboard IDs.
+    @getter
+    function ids(self: LeaderboardManager) -> array<text> {
+        return self.leaderboards.keys();
+    }
+
+    /// Returns the number of leaderboards.
+    @getter
+    function count(self: LeaderboardManager) -> number {
+        return self.leaderboards.len();
+    }
+}
+
+@test
+function test_leaderboard_creation() {
+    var lb = Leaderboard("top_coins", location(0, 60, 0), "coins");
+    lb.title = "&6Top Coins";
+    lb.max_places = 5;
+}

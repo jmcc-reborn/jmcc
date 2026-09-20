@@ -1,0 +1,188 @@
+/// RU: Примитивный числовой тип данных с поддержкой математических операций.
+/// EN: Primitive number data type with support for mathematical operations.
+@alias("число")
+@lang_item
+export class number {
+    inline function __add__(first: number, second: number) -> number {
+        return variable::add([first, second]);
+    }
+
+    @setter
+    inline function __iadd__(self: number, second: number) -> number {
+        return self.increment(second);
+    }
+
+    inline function __subtract__(first: number, second: number) -> number {
+        return variable::subtract([first, second]);
+    }
+
+    @setter
+    inline function __isubtract__(self: number, second: number) -> number {
+        return self.decrement(second);
+    }
+
+    inline function __multiply__(first: number, second: number) -> number {
+        return variable::multiply([first, second]);
+    }
+
+    @setter
+    inline function __imultiply__(self: number, second: number) -> number {
+        return self = variable::multiply([self, second]);
+    }
+
+    inline function __divide__(first: number, second: number) -> number {
+        return variable::divide([first, second]);
+    }
+
+    @setter
+    inline function __idivide__(self: number, second: number) -> number {
+        return self = variable::divide([self, second]);
+    }
+
+    inline function __remainder__(first: number, second: number) -> number {
+        return variable::remainder(first, second, "MODULO");
+    }
+
+    @setter
+    inline function __iremainder__(self: number, second: number) -> number {
+        self = variable::remainder(self, second, "MODULO");
+    }
+
+    inline function __pow__(first: number, second: number) -> number {
+        return variable::pow(first, second);
+    }
+
+    @setter
+    inline function __ipow__(self: number, second: number) -> number {
+        self = variable::pow(self, second);
+    }
+
+    inline function __equals__(first: number, second: number) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: number, second: number) -> boolean {
+        return first.not_equals(second);
+    }
+
+    inline function __greater__(first: number, second: number) -> boolean {
+        return first.greater(second);
+    }
+
+    inline function __less__(first: number, second: number) -> boolean {
+        return first.less(second);
+    }
+
+    inline function __greater_or_equals__(first: number, second: number) -> boolean {
+        return first.greater_or_equals(second);
+    }
+
+    inline function __less_or_equals__(first: number, second: number) -> boolean {
+        return first.less_or_equals(second);
+    }
+
+    /// RU:
+    /// Возвращает абсолютное значение числа.
+    /// EN:
+    /// Returns the absolute value of the number.
+    @alias("абс")
+    inline function abs(self: number) -> number {
+        return variable::absolute(self);
+    }
+
+    /// RU:
+    /// Возвращает квадратный корень числа.
+    /// EN:
+    /// Returns the square root of the number.
+    @alias("корень")
+    inline function sqrt(self: number) -> number {
+        return variable::root(self, 2);
+    }
+
+    /// RU:
+    /// Возвращает кубический корень числа.
+    /// EN:
+    /// Returns the cube root of the number.
+    @alias("куб_корень")
+    inline function cbrt(self: number) -> number {
+        return variable::root(self, 3);
+    }
+
+    /// RU:
+    /// Округляет число вверх до целого.
+    /// EN:
+    /// Rounds the number up to the nearest integer.
+    @alias("потолок")
+    @alias("округлить_вверх")
+    inline function ceil(self: number) -> number {
+        return variable::round(self, 0, round_type = "CEIL");
+    }
+
+    /// RU:
+    /// Округляет число вниз до целого.
+    /// EN:
+    /// Rounds the number down to the nearest integer.
+    @alias("пол")
+    @alias("округлить_вниз")
+    inline function floor(self: number) -> number {
+        return variable::round(self, 0, round_type = "FLOOR");
+    }
+
+    /// RU:
+    /// Вычисляет синус числа (в радианах).
+    /// EN:
+    /// Computes the sine of the number in radians.
+    @alias("синус")
+    inline function sin(self: number) -> number {
+        return variable::sine(self, variant = "SINE", input = "RADIANS");
+    }
+
+    /// RU:
+    /// Вычисляет косинус числа (в радианах).
+    /// EN:
+    /// Computes the cosine of the number in radians.
+    @alias("косинус")
+    inline function cos(self: number) -> number {
+        return variable::cosine(self, variant = "COSINE", input = "RADIANS");
+    }
+
+    /// RU:
+    /// Округляет число до заданной точности.
+    /// EN:
+    /// Rounds the number to the specified precision.
+    @alias("округлить")
+    inline function round(
+        self: number,
+        precision: number = 0,
+        round_type: text = "ROUND",
+    ) -> number {
+        return variable::round(self, precision, round_type = round_type);
+    }
+
+    /// RU:
+    /// Возводит число в степень exponent.
+    /// EN:
+    /// Raises the number to the given power.
+    @alias("степень")
+    inline function pow(self: number, exponent: number) -> number {
+        return variable::pow(self, exponent);
+    }
+
+    /// RU:
+    /// Возвращает наименьшее значение среди self и списка значений.
+    /// EN:
+    /// Returns the minimum value among self and the provided list.
+    @alias("минимум")
+    inline function min(self: number, values: array<number>) -> number {
+        return variable::min(variable::append_list([self], values));
+    }
+
+    /// RU:
+    /// Возвращает наибольшее значение среди self и списка значений.
+    /// EN:
+    /// Returns the maximum value among self and the provided list.
+    @alias("максимум")
+    inline function max(self: number, values: array<number>) -> number {
+        return variable::max(variable::append_list([self], values));
+    }
+}

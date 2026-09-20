@@ -1,0 +1,152 @@
+/// RU: Псевдоним текстового типа (str).
+/// EN: Alias for the text type (str).
+@alias("строка")
+export typealias str = text;
+
+/// RU: Псевдоним текстового типа (string).
+/// EN: Alias for the text type (string).
+@alias("текст")
+export typealias string = text;
+
+/// RU: Примитивный строковый тип данных.
+/// EN: Primitive string data type.
+@alias("текст")
+@alias("строка")
+@lang_item
+export class text {
+    inline function __add__(first: text, second: text) -> text {
+        return "$first$second";
+    }
+
+    inline function __multiply__(first: text, second: number) -> text {
+        return variable::repeat_text(first, second);
+    }
+
+    inline function __equals__(first: text, second: text) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: text, second: text) -> boolean {
+        return first.not_equals(second);
+    }
+
+    inline function __greater__(first: text, second: text) -> boolean {
+        var length_first = variable::get_text_length(first);
+        var length_second = variable::get_text_length(second);
+        return length_first.greater(length_second);
+    }
+
+    inline function __less__(first: text, second: text) -> boolean {
+        var length_first = variable::get_text_length(first);
+        var length_second = variable::get_text_length(second);
+        return length_first.less(length_second);
+    }
+
+    inline function __greater_or_equals__(first: text, second: text) -> boolean {
+        var length_first = variable::get_text_length(first);
+        var length_second = variable::get_text_length(second);
+        return length_first.greater_or_equals(length_second);
+    }
+
+    inline function __less_or_equals__(first: text, second: text) -> boolean {
+        var length_first = variable::get_text_length(first);
+        var length_second = variable::get_text_length(second);
+        return length_first.less_or_equals(length_second);
+    }
+
+    @getter
+    inline function __subscript__(self: text, index: number) -> text {
+        return self.get_char_at(index);
+    }
+
+    @getter
+    inline function __slice__(self: text, start: number, end: number) -> text {
+        return variable::trim_text(self, start, end);
+    }
+
+    @setter
+    inline function __subscript__(self: text, index: number, value: text) -> text {
+        line var left: text = self[0:index];
+        line var right: text = self[index + 1:self.len()];
+        return left + value + right;
+    }
+
+    @setter
+    inline function __slice__(
+        self: text,
+        first_index: number,
+        second_index: number,
+        value: text,
+    ) -> text {
+        line var left: text = self[0:first_index];
+        line var right: text = self[second_index:self.len()];
+        return left + value + right;
+    }
+
+    /// RU:
+    /// Возвращает длину текста (количество символов).
+    /// EN:
+    /// Returns the length of the text.
+    @alias("длина")
+    @alias("размер")
+    inline function len(self: text) -> number {
+        return self.get_text_length();
+    }
+
+    /// RU:
+    /// Преобразует текст в верхний регистр.
+    /// EN:
+    /// Converts text to uppercase.
+    @alias("в_верхний_регистр")
+    @alias("верхний_регистр")
+    inline function upper(self: text) -> text {
+        return variable::set_text_case(self, "UPPER");
+    }
+
+    /// RU:
+    /// Преобразует текст в нижний регистр.
+    /// EN:
+    /// Converts text to lowercase.
+    @alias("в_нижний_регистр")
+    @alias("нижний_регистр")
+    inline function lower(self: text) -> text {
+        return variable::set_text_case(self, "LOWER");
+    }
+
+    /// RU:
+    /// Удаляет пробельные символы с концов текста.
+    /// EN:
+    /// Strips whitespace from the ends of the text.
+    @alias("обрезать")
+    inline function trim(self: text, strip_type: text = "ALL") -> text {
+        return variable::strip_text(self, strip_type = strip_type);
+    }
+
+    /// RU:
+    /// Заменяет вхождения регулярного выражения на указанную строку.
+    /// EN:
+    /// Replaces regex occurrences with replacement text.
+    @alias("заменить")
+    inline function replace(self: text, regex: text, replacement: text) -> text {
+        return variable::regex_replace_text(self, regex, replacement);
+    }
+
+    /// RU:
+    /// Разбивает текст на массив подстрок по разделителю.
+    /// EN:
+    /// Splits text into an array of substrings by delimiter.
+    @alias("разбить")
+    @alias("разделить")
+    inline function split(self: text, delimiter: text) -> array {
+        return variable::split_text(self, delimiter);
+    }
+
+    /// RU:
+    /// Проверяет, начинается ли текст с указанного префикса.
+    /// EN:
+    /// Checks if the text starts with the specified prefix.
+    @alias("начинается_с")
+    inline function starts_with(self: text, prefix: text) -> boolean {
+        return variable::text_starts_with(self, [prefix]);
+    }
+}

@@ -1,0 +1,191 @@
+//! RU: Реализация алгоритма поиска пути A* для сеточных карт.
+//! EN: A* pathfinding algorithm implementation for grid-based maps.
+
+/// RU: Представляет узел в алгоритме поиска пути A*.
+/// EN: Represents a node in the A* pathfinding algorithm.
+@alias("Узел")
+@alias("Вершина")
+export class Node {
+    var x: number;
+    var y: number;
+    var g: number;
+    var h: number;
+    var f: number;
+    var parent: any;
+    var is_start: boolean;
+
+    /// RU:
+    /// Инициализирует узел координатами и признаком начальной точки.
+    /// EN:
+    /// Initializes a node with coordinates and start status.
+    function __init__(self: Node, x: number, y: number, is_start: boolean = false) -> Node {
+        self.x = x;
+        self.y = y;
+        self.g = 0;
+        self.h = 0;
+        self.f = 0;
+        self.is_start = is_start;
+        return self;
+    }
+}
+
+/// RU: Реализация алгоритма поиска пути A*.
+/// EN: Implements the A* pathfinding algorithm.
+@alias("АСтар")
+@alias("ПоискПути")
+export class AStar {
+    var grid: array<array<number>>;
+    var rows: number;
+    var cols: number;
+    var allow_diagonal: boolean;
+
+    /// RU:
+    /// Инициализирует модуль поиска пути картой и параметром движения по диагонали.
+    /// EN:
+    /// Initializes the pathfinder with a grid and diagonal movement option.
+    function __init__(
+        self: AStar,
+        grid: array<array<number>>,
+        allow_diagonal: boolean = false,
+    ) -> AStar {
+        self.grid = grid;
+        self.rows = variable::get_list_length(grid);
+        self.cols = variable::get_list_length(grid[0]);
+        self.allow_diagonal = allow_diagonal;
+        return self;
+    }
+
+    /// RU:
+    /// Вычисляет эвристическое расстояние между двумя точками.
+    /// EN:
+    /// Calculates the estimated distance between two points.
+    @alias("эвристика")
+    function heuristic(self: AStar, x1: number, y1: number, x2: number, y2: number) -> number {
+        var dx = variable::absolute(x1 - x2);
+        var dy = variable::absolute(y1 - y2);
+        if self.allow_diagonal {
+            return variable::max([dx, dy]) + (variable::root(2, 2) - 1) * variable::min([dx, dy]);
+        }
+        // Manhattan distance
+        return dx + dy;
+    }
+
+    /// RU:
+    /// Проверяет, является ли ячейка проходимой и находится ли в границах карты.
+    /// EN:
+    /// Checks if a specific grid cell is traversable and within bounds.
+    @alias("проходимо")
+    @alias("доступно")
+    function is_walkable(self: AStar, x: number, y: number) -> boolean {
+        if (x < 0 or y < 0 or x >= self.rows or y >= self.cols) {
+            return false;
+        }
+        var row = self.grid[x];
+        return row[y] == 0;
+    }
+
+    /// RU:
+    /// Находит кратчайший путь от начальных координат к конечным.
+    /// EN:
+    /// Finds the shortest path from start to end coordinates.
+    @alias("найти_путь")
+    function find_path(
+        self: AStar,
+        start_x: number,
+        start_y: number,
+        end_x: number,
+        end_y: number,
+    ) -> array<array<number>> {
+        if not self.is_walkable(start_x, start_y) and self.is_walkable(end_x, end_y) {
+            return [];
+        }
+
+        var start_node = Node(start_x, start_y, true);
+        start_node.g = 0;
+        start_node.h = self.heuristic(start_x, start_y, end_x, end_y);
+        start_node.f = start_node.h;
+
+        var open_map: map<text, any> = {};
+        open_map["${start_x}:${start_y}"] = start_node;
+
+        var closed_map: map<text, boolean> = {};
+
+        var dirs: array<array<number>>;
+        if self.allow_diagonal {
+            dirs = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [-1, 1], [1, -1], [1, 1]];
+        } else {
+            dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+        }
+
+        while variable::get_map_size(open_map) > 0 {
+            var current_node: Node = Node(0, 0);
+            var current_key: text = "";
+            var min_f = 9999999;
+
+            for k, v in open_map {
+                var n = v as Node;
+                if n.f < min_f {
+                    min_f = n.f;
+                    current_node = n;
+                    current_key = k;
+                }
+            }
+
+            if current_node.x == end_x and current_node.y == end_y {
+                var path: array<array<number>> = [];
+                var current = current_node;
+                while true {
+                    path = path.push([current.x, current.y]);
+                    if current.is_start {
+                        break;
+                    }
+                    current = current.parent as Node;
+                }
+                return variable::reverse_list(path);
+            }
+
+            var temp: any = 0;
+            open_map = variable::remove_map_entry(temp, open_map, current_key);
+            closed_map["${current_node.x}:${current_node.y}"] = true;
+
+            for dir in dirs {
+                var next_x = current_node.x + dir[0];
+                var next_y = current_node.y + dir[1];
+                var next_key = "${next_x}:${next_y}";
+
+                if self.is_walkable(next_x, next_y) and not closed_map.has_key(next_key) {
+                    var child = Node(next_x, next_y);
+                    child.parent = current_node;
+
+                    var d = 1;
+                    if dir[0] != 0 and dir[1] != 0 {
+                        d = variable::root(2, 2);
+                    }
+                    child.g = current_node.g + d;
+                    child.h = self.heuristic(next_x, next_y, end_x, end_y);
+                    child.f = child.g + child.h;
+
+                    if open_map.has_key(next_key) {
+                        var existing = open_map[next_key] as Node;
+                        if child.g < existing.g {
+                            existing.g = child.g;
+                            existing.f = child.g + existing.h;
+                            existing.parent = current_node;
+                        }
+                    } else {
+                        open_map[next_key] = child;
+                    }
+                }
+            }
+        }
+
+        return [];
+    }
+}
+
+@test
+function test_astar_heuristics() {
+    var grid = [[0, 0, 0], [1, 1, 0], [0, 0, 0]];
+    var astar = AStar(grid, false);
+    var h = astar.heuristic(0, 0, 2, 2);
+}

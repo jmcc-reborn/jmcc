@@ -1,0 +1,20 @@
+// Destructuring a multi-`assign` action: each name takes one output slot's type.
+//
+// `variable::remove_list_value_at_index` has two assign slots, `variable` (array) and
+// `removed_value` (any), and the names bind to them in that order. The value is an action call,
+// not a list, so the types come from the schema and not from the assigned value. Only the first
+// name may carry a scope: the rest take the edition's default, so both are left plain here.
+//
+//   RUST_LOG=warn cargo run -p jmcc -- compile jmcc/tests/multi_assign.jc --edition 2026 --emit hir
+// Expects no warnings and no errors; the HIR binds the slots to `$__ht0` / `$__ht1`.
+
+process takeList(a: array) { }
+
+process takeAny(a: any) { }
+
+event<world_start> {
+    game var list: array = [1, 2, 3]
+    var rest, removed = variable::remove_list_value_at_index(list, 0)
+    takeList(rest)
+    takeAny(removed)
+}

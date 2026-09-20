@@ -1,0 +1,20 @@
+/// RU: Псевдоним логического типа.
+/// EN: Alias for boolean type.
+@alias("логическое")
+@alias("булево")
+export typealias bool = boolean;
+
+/// RU: Логический тип данных (истина или ложь).
+/// EN: Boolean data type (true or false).
+@alias("логическое")
+@alias("булево")
+@lang_item
+export class boolean {
+    inline function __equals__(first: boolean, second: boolean) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: boolean, second: boolean) -> boolean {
+        return first.not_equals(second);
+    }
+}

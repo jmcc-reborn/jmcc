@@ -1,0 +1,47 @@
+// Пример калькулятора математических выражений в JMCC (edition 2026).
+// Демонстрирует:
+// - Функции с параметрами по умолчанию
+// - Условные конструкции if-elif-else
+// - Использование встроенных математических функций
+
+function add(a: number, b: number = 0) -> number {
+    return a + b;
+}
+
+function sub(a: number, b: number = 0) -> number {
+    return a - b;
+}
+
+function mul(a: number, b: number = 1) -> number {
+    return a * b;
+}
+
+function div(a: number, b: number = 1) -> number {
+    if (b == 0) {
+        return 0;
+    }
+    return a / b;
+}
+
+function calc(a: number, op: text, b: number) -> number {
+    if (op == "+") {
+        return add(a, b);
+    } elif (op == "-") {
+        return sub(a, b);
+    } elif (op == "*") {
+        return mul(a, b);
+    } elif (op == "/") {
+        return div(a, b);
+    } else {
+        return 0;
+    }
+}
+
+event<player_join> {
+    line var res1 = calc(10, "+", 5);
+    line var res2 = calc(10, "*", 3);
+    line var res3 = calc(20, "/", 4);
+    player::message("&6[Калькулятор]&f 10 + 5 = $res1");
+    player::message("&6[Калькулятор]&f 10 * 3 = $res2");
+    player::message("&6[Калькулятор]&f 20 / 4 = $res3");
+}

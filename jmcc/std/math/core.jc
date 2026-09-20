@@ -1,0 +1,112 @@
+//! RU: Математический модуль, предоставляющий стандартные математические функции.
+//! Все тригонометрические функции принимают и возвращают значения в радианах.
+//! EN: Math utilities module providing common mathematical functions.
+//! All trigonometric functions expect and return values in radians.
+
+/// RU:
+/// Возвращает абсолютное значение числа `x`.
+/// EN:
+/// Returns the absolute value of `x`.
+@alias("абс")
+export inline function abs(x: number) -> number {
+    return variable::absolute(x);
+}
+
+/// RU:
+/// Возвращает квадратный корень из `x`.
+/// EN:
+/// Returns the square root of `x`.
+@alias("корень")
+export inline function sqrt(x: number) -> number {
+    return variable::root(x, 2);
+}
+
+/// RU:
+/// Возвращает кубический корень из `x`.
+/// EN:
+/// Returns the cube root of `x`.
+@alias("куб_корень")
+export inline function cbrt(x: number) -> number {
+    return variable::root(x, 3);
+}
+
+/// RU:
+/// Округляет `x` вверх до ближайшего целого.
+/// EN:
+/// Rounds `x` up to the nearest integer.
+@alias("потолок")
+@alias("округлить_вверх")
+export inline function ceil(x: number) -> number {
+    return variable::round(x, 0, round_type = "CEIL");
+}
+
+/// RU:
+/// Округляет `x` вниз до ближайшего целого.
+/// EN:
+/// Rounds `x` down to the nearest integer.
+@alias("пол")
+@alias("округлить_вниз")
+export inline function floor(x: number) -> number {
+    return variable::round(x, 0, round_type = "FLOOR");
+}
+
+/// RU:
+/// Вычисляет синус угла в радианах.
+/// EN:
+/// Computes the sine of an angle given in radians.
+@alias("синус")
+export inline function sin(x: number) -> number {
+    return variable::sine(x, variant = "SINE", input = "RADIANS");
+}
+
+/// RU:
+/// Вычисляет косинус угла в радианах.
+/// EN:
+/// Computes the cosine of an angle given in radians.
+@alias("косинус")
+export inline function cos(x: number) -> number {
+    return variable::cosine(x, variant = "COSINE", input = "RADIANS");
+}
+
+/// RU:
+/// Округляет `x` до `n` знаков после запятой.
+/// EN:
+/// Rounds `x` to `n` decimal places using standard rounding.
+@alias("округлить")
+export inline function round(x: number, n: number) -> number {
+    return variable::round(x, n, round_type = "ROUND");
+}
+
+/// RU:
+/// Возводит `x` в степень `y`.
+/// EN:
+/// Raises `x` to the power of `y`.
+@alias("степень")
+export inline function pow(x: number, y: number) -> number {
+    return variable::pow(x, y);
+}
+
+/// RU:
+/// Возвращает наименьшее значение из переданного списка чисел.
+/// EN:
+/// Returns the smallest value from the provided list of numbers.
+@alias("минимум")
+export inline function min(values: list<number>) -> number {
+    return variable::min(values);
+}
+
+/// RU:
+/// Возвращает наибольшее значение из переданного списка чисел.
+/// EN:
+/// Returns the largest value from the provided list of numbers.
+@alias("максимум")
+export inline function max(values: list<number>) -> number {
+    return variable::max(values);
+}
+
+@test
+function test_math_functions() {
+    var a = abs(-5);
+    var s = sqrt(16);
+    var p = pow(2, 3);
+}

@@ -1,0 +1,415 @@
+/// RU: Интерфейс итератора по элементам.
+/// EN: Iterator interface for traversing elements.
+@alias("Итератор")
+export interface Iterator<T> {
+    /// RU: Проверяет наличие следующего элемента.
+    /// EN: Checks if there is a next element.
+    @alias("есть_следующий")
+    @alias("есть_след")
+    function has_next(self: Iterator<T>) -> boolean;
+
+    /// RU: Возвращает следующий элемент итератора.
+    /// EN: Returns the next element of the iterator.
+    @alias("следующий")
+    @alias("след")
+    function next(self: Iterator<T>) -> T;
+}
+
+/// RU: Интерфейс коллекции, поддерживающей итерацию.
+/// EN: Interface for collections that can be iterated over.
+@alias("Итерируемый")
+export interface Iterable<T> {
+    /// RU: Возвращает итератор для коллекции.
+    /// EN: Returns an iterator for the collection.
+    @alias("итератор")
+    @alias("into_iter")
+    function iter(self: Iterable<T>) -> Iterator<T>;
+}
+
+/// RU: Итератор по элементам массива.
+/// EN: Iterator over elements of an array.
+@alias("ИтераторМассива")
+@lang_item
+export class ArrayIterator<T> implements Iterator<T>, Iterable<T> {
+    var array: array<T>;
+    var index: number;
+
+    /// RU:
+    /// Возвращает итератор для коллекции.
+    /// EN:
+    /// Returns an iterator for the collection.
+    @alias("итератор")
+    @alias("into_iter")
+    function iter(self: ArrayIterator<T>) -> ArrayIterator<T> {
+        return self;
+    }
+
+    /// RU:
+    /// Инициализирует итератор массива.
+    /// EN:
+    /// Initializes an array iterator.
+    function __init__(self: ArrayIterator<T>, arr: array<T>) {
+        self.array = arr;
+        self.index = 0;
+    }
+
+    /// RU:
+    /// Проверяет наличие следующего элемента в массиве.
+    /// EN:
+    /// Checks if there is a next element in the array.
+    @alias("есть_следующий")
+    @alias("есть_след")
+    function has_next(self: ArrayIterator<T>) -> boolean {
+        return self.index < variable::get_list_length(self.array);
+    }
+
+    /// RU:
+    /// Возвращает следующий элемент массива.
+    /// EN:
+    /// Returns the next element of the array.
+    @alias("следующий")
+    @alias("след")
+    function next(self: ArrayIterator<T>) -> T {
+        var val: T = self.array[self.index];
+        self.index += 1;
+        return val;
+    }
+
+    /// RU:
+    /// Преобразует оставшиеся элементы итератора в массив.
+    /// EN:
+    /// Collects the remaining elements into an array.
+    @alias("в_массив")
+    function to_array(self: ArrayIterator<T>) -> array<T> {
+        var res = [];
+        while self.has_next() {
+            res = variable::append_list(res, [self.next()]);
+        }
+        return res;
+    }
+}
+
+/// RU: Итератор по ключам карты (словаря).
+/// EN: Iterator over keys of a map.
+@alias("ИтераторКлючейКарты")
+@alias("ИтераторКлючей")
+@lang_item
+export class MapKeyIterator<K, V> implements Iterator<K>, Iterable<K> {
+    var keys: array<K>;
+    var index: number;
+
+    /// RU:
+    /// Возвращает итератор для коллекции.
+    /// EN:
+    /// Returns an iterator for the collection.
+    @alias("итератор")
+    @alias("into_iter")
+    function iter(self: MapKeyIterator<K, V>) -> MapKeyIterator<K, V> {
+        return self;
+    }
+
+    /// RU:
+    /// Инициализирует итератор ключей карты.
+    /// EN:
+    /// Initializes a map keys iterator.
+    function __init__(self: MapKeyIterator<K, V>, m: map<K, V>) {
+        self.keys = variable::get_map_keys(m);
+        self.index = 0;
+    }
+
+    /// RU:
+    /// Проверяет наличие следующего ключа.
+    /// EN:
+    /// Checks if there is a next key.
+    @alias("есть_следующий")
+    @alias("есть_след")
+    function has_next(self: MapKeyIterator<K, V>) -> boolean {
+        return self.index < variable::get_list_length(self.keys);
+    }
+
+    /// RU:
+    /// Возвращает следующий ключ карты.
+    /// EN:
+    /// Returns the next map key.
+    @alias("следующий")
+    @alias("след")
+    function next(self: MapKeyIterator<K, V>) -> K {
+        var key: K = self.keys[self.index];
+        self.index += 1;
+        return key;
+    }
+}
+
+/// RU: Полуоткрытый диапазон чисел [start, end).
+/// EN: Half-open numeric range [start, end).
+@alias("Диапазон")
+@lang_item
+export class Range implements Iterable<number>, Iterator<number> {
+    var start: number;
+    var end: number;
+    var current: number;
+    var step: number;
+
+    /// RU:
+    /// Инициализирует диапазон чисел.
+    /// EN:
+    /// Initializes a numeric range.
+    inline function __init__(self: Range, start: number, end: number, step: number = 1) -> Range {
+        self.start = start;
+        self.end = end;
+        self.current = start;
+        self.step = step;
+        return self;
+    }
+
+    /// RU:
+    /// Проверяет наличие следующего элемента.
+    /// EN:
+    /// Checks if there is a next element.
+    @alias("есть_следующий")
+    @alias("есть_след")
+    function has_next(self: Range) -> boolean {
+        if self.step > 0 {
+            return self.current < self.end;
+        }
+        return self.current > self.end;
+    }
+
+    /// RU:
+    /// Возвращает следующий элемент диапазона.
+    /// EN:
+    /// Returns the next element of the range.
+    @alias("следующий")
+    @alias("след")
+    function next(self: Range) -> number {
+        var val: number = self.current;
+        self.current += self.step;
+        return val;
+    }
+
+    /// RU:
+    /// Возвращает итератор для диапазона.
+    /// EN:
+    /// Returns an iterator for the range.
+    @alias("итератор")
+    @alias("into_iter")
+    function iter(self: Range) -> Range {
+        return self;
+    }
+
+    /// RU:
+    /// Задает шаг итерации диапазона.
+    /// EN:
+    /// Sets the step of the range.
+    @alias("с_шагом")
+    function step_by(self: Range, step: number) -> Range {
+        self.step = step;
+        return self;
+    }
+
+    /// RU:
+    /// Возвращает количество элементов в диапазоне.
+    /// EN:
+    /// Returns the number of elements in the range.
+    @alias("длина")
+    @alias("размер")
+    function len(self: Range) -> number {
+        if self.step > 0 {
+            if self.end <= self.start {
+                return 0;
+            }
+            var diff = self.end - self.start;
+            if self.step == 1 {
+                return diff;
+            }
+            return variable::round(diff / self.step, 0, round_type = "CEIL");
+        }
+        if self.start <= self.end {
+            return 0;
+        }
+        var diff = self.start - self.end;
+        var abs_step = -self.step;
+        if abs_step == 1 {
+            return diff;
+        }
+        return variable::round(diff / abs_step, 0, round_type = "CEIL");
+    }
+
+    /// RU:
+    /// Преобразует диапазон в массив чисел.
+    /// EN:
+    /// Converts the range into an array of numbers.
+    @alias("в_массив")
+    function to_array(self: Range) -> array<number> {
+        var res = [];
+        for cur in self {
+            res = variable::append_list(res, [cur]);
+        }
+        return res;
+    }
+
+    /// RU:
+    /// Проверяет, содержится ли число в диапазоне.
+    /// EN:
+    /// Checks if a number is contained within the range.
+    @alias("содержит")
+    function contains(self: Range, val: number) -> boolean {
+        if self.step > 0 {
+            if (val < self.start or val >= self.end) {
+                return false;
+            }
+            if self.step == 1 {
+                return true;
+            }
+            return (val - self.start) % self.step == 0;
+        }
+        if (val > self.start or val <= self.end) {
+            return false;
+        }
+        var abs_step = -self.step;
+        if abs_step == 1 {
+            return true;
+        }
+        return (self.start - val) % abs_step == 0;
+    }
+}
+
+/// RU: Включительный диапазон чисел [start, end].
+/// EN: Inclusive numeric range [start, end].
+@alias("ДиапазонВключительно")
+@lang_item
+export class RangeInclusive implements Iterable<number>, Iterator<number> {
+    var start: number;
+    var end: number;
+    var current: number;
+    var step: number;
+
+    /// RU:
+    /// Инициализирует включительный диапазон чисел.
+    /// EN:
+    /// Initializes an inclusive numeric range.
+    inline function __init__(
+        self: RangeInclusive,
+        start: number,
+        end: number,
+        step: number = 1,
+    ) -> RangeInclusive {
+        self.start = start;
+        self.end = end;
+        self.current = start;
+        self.step = step;
+        return self;
+    }
+
+    /// RU:
+    /// Проверяет наличие следующего элемента.
+    /// EN:
+    /// Checks if there is a next element.
+    @alias("есть_следующий")
+    @alias("есть_след")
+    function has_next(self: RangeInclusive) -> boolean {
+        if self.step > 0 {
+            return self.current <= self.end;
+        }
+        return self.current >= self.end;
+    }
+
+    /// RU:
+    /// Возвращает следующий элемент диапазона.
+    /// EN:
+    /// Returns the next element of the range.
+    @alias("следующий")
+    @alias("след")
+    function next(self: RangeInclusive) -> number {
+        var val: number = self.current;
+        self.current += self.step;
+        return val;
+    }
+
+    /// RU:
+    /// Возвращает итератор для диапазона.
+    /// EN:
+    /// Returns an iterator for the range.
+    @alias("итератор")
+    @alias("into_iter")
+    function iter(self: RangeInclusive) -> RangeInclusive {
+        return self;
+    }
+
+    /// RU:
+    /// Задает шаг итерации диапазона.
+    /// EN:
+    /// Sets the step of the range.
+    @alias("с_шагом")
+    function step_by(self: RangeInclusive, step: number) -> RangeInclusive {
+        self.step = step;
+        return self;
+    }
+
+    /// RU:
+    /// Возвращает количество элементов в диапазоне.
+    /// EN:
+    /// Returns the number of elements in the range.
+    @alias("длина")
+    @alias("размер")
+    function len(self: RangeInclusive) -> number {
+        if self.step > 0 {
+            if self.end < self.start {
+                return 0;
+            }
+            var diff = self.end - self.start;
+            if self.step == 1 {
+                return diff + 1;
+            }
+            return variable::round(diff / self.step, 0, round_type = "FLOOR") + 1;
+        }
+        if self.start < self.end {
+            return 0;
+        }
+        var diff = self.start - self.end;
+        var abs_step = -self.step;
+        if abs_step == 1 {
+            return diff + 1;
+        }
+        return variable::round(diff / abs_step, 0, round_type = "FLOOR") + 1;
+    }
+
+    /// RU:
+    /// Преобразует включительный диапазон в массив чисел.
+    /// EN:
+    /// Converts the inclusive range into an array of numbers.
+    @alias("в_массив")
+    function to_array(self: RangeInclusive) -> array<number> {
+        var res = [];
+        for cur in self {
+            res = variable::append_list(res, [cur]);
+        }
+        return res;
+    }
+
+    /// RU:
+    /// Проверяет, содержится ли число в диапазоне.
+    /// EN:
+    /// Checks if a number is contained within the range.
+    @alias("содержит")
+    function contains(self: RangeInclusive, val: number) -> boolean {
+        if self.step > 0 {
+            if (val < self.start or val > self.end) {
+                return false;
+            }
+            if self.step == 1 {
+                return true;
+            }
+            return (val - self.start) % self.step == 0;
+        }
+        if (val > self.start or val < self.end) {
+            return false;
+        }
+        var abs_step = -self.step;
+        if abs_step == 1 {
+            return true;
+        }
+        return (self.start - val) % abs_step == 0;
+    }
+}
+

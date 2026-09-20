@@ -1,0 +1,5 @@
+/// RU: Класс для работы со значениями в JustMC.
+/// EN: Class for working with values in JustMC.
+@alias("значение")
+@lang_item
+export class value {}

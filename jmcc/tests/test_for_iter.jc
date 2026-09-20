@@ -1,0 +1,43 @@
+@test
+export function test_iterators() {
+    var arr = [1, 2, 3];
+    for x in arr.iter() {
+        player::message(x);
+    }
+
+    for x in arr.into_iter() {
+        player::message(x);
+    }
+
+    for x in ArrayIterator(arr) {
+        player::message(x);
+    }
+
+    var m = {"a": 10, "b": 20};
+    for k in m.iter() {
+        player::message(k);
+    }
+
+    for k, v in m.into_iter() {
+        player::message(k);
+        player::message(v);
+    }
+
+    for i in (0..10).iter() {
+        player::message(i);
+    }
+
+    for i in (0..=5).into_iter() {
+        player::message(i);
+    }
+
+    var it = arr.iter();
+    for x in it {
+        player::message(x);
+    }
+
+    var mit = m.iter();
+    for k in mit {
+        player::message(k);
+    }
+}

@@ -1,0 +1,220 @@
+//! RU: Модуль нейронных сетей с реализацией многослойного перцептрона (MLP).
+//! EN: Neural network module providing a simple Multi-Layer Perceptron implementation.
+
+/// RU: Представляет один слой нейронной сети.
+/// EN: Represents a single layer in a neural network.
+@alias("Слой")
+export class Layer {
+    var input_count: number;
+    var output_count: number;
+    var weights: array<array<number>>;
+    var biases: array<number>;
+    var last_inputs: array<number>;
+    var last_outputs: array<number>;
+
+    /// RU:
+    /// Инициализирует слой со случайными весами и смещениями.
+    /// EN:
+    /// Initializes the layer with random weights and biases.
+    function __init__(self: Layer, input_count: number, output_count: number) -> Layer {
+        self.input_count = input_count;
+        self.output_count = output_count;
+        self.weights = [];
+        self.biases = [];
+        self.last_inputs = [];
+        self.last_outputs = [];
+
+        for o in 0..output_count {
+            var row: array<number> = [];
+            for i in 0..input_count {
+                row = variable::append_list(row, [variable::random_number(-100, 100) / 100]);
+            }
+            self.weights = variable::append_list(self.weights, [row]);
+            self.biases = variable::append_list(
+                self.biases,
+                [variable::random_number(-100, 100) / 100],
+            );
+        }
+        return self;
+    }
+
+    /// RU:
+    /// Вычисляет функцию активации сигмоиды.
+    /// EN:
+    /// Applies the sigmoid activation function to a value.
+    @alias("сигмоида")
+    function sigmoid(self: Layer, x: number) -> number {
+        return 1 / (1 + variable::pow(2.718281828, -x));
+    }
+
+    /// RU:
+    /// Пропускает входные данные через слой (прямой проход).
+    /// EN:
+    /// Passes inputs through the layer to generate outputs.
+    @alias("прямой_проход")
+    function forward(self: Layer, inputs: array<number>) -> Layer {
+        self.last_inputs = inputs;
+        var outputs: array<number> = [];
+
+        for o in 0..self.output_count {
+            var sum: number = self.biases[o];
+            for i in 0..self.input_count {
+                var w = self.weights[o][i];
+                var inp = inputs[i];
+                sum += w * inp;
+            }
+            outputs = variable::append_list(outputs, [self.sigmoid(sum)]);
+        }
+
+        self.last_outputs = outputs;
+        return self;
+    }
+}
+
+/// RU: Представляет многослойный перцептрон (нейронную сеть).
+/// EN: Represents a Multi-Layer Perceptron neural network.
+@alias("НейроннаяСеть")
+@alias("Нейросеть")
+export class NeuralNetwork {
+    var layers: array<Layer>;
+    var learning_rate: number;
+
+    /// RU:
+    /// Инициализирует нейронную сеть с заданными размерами слоев и скоростью обучения.
+    /// EN:
+    /// Initializes the neural network with specified layer sizes and learning rate.
+    function __init__(
+        self: NeuralNetwork,
+        layer_sizes: array<number>,
+        learning_rate: number = 0.5,
+    ) -> NeuralNetwork {
+        self.layers = [];
+        self.learning_rate = learning_rate;
+
+        var num_layers = variable::get_list_length(layer_sizes);
+        for i in 0..num_layers - 1 {
+            var layer = Layer(layer_sizes[i], layer_sizes[i + 1]);
+            self.layers = variable::append_list(self.layers, [layer]);
+        }
+        return self;
+    }
+
+    /// RU:
+    /// Выполняет предсказание сети для переданных входных данных.
+    /// EN:
+    /// Passes inputs through the network to get a prediction.
+    @alias("предсказать")
+    function predict(self: NeuralNetwork, inputs: array<number>) -> array<number> {
+        var current_inputs = inputs;
+        var layers = self.layers;
+        var num_layers = variable::get_list_length(layers);
+
+        for i in 0..num_layers {
+            var layer = layers[i];
+            layer = layer.forward(current_inputs);
+            current_inputs = layer.last_outputs;
+            layers[i] = layer;
+        }
+
+        return current_inputs;
+    }
+
+    /// RU:
+    /// Обучает сеть методом обратного распространения ошибки на одном примере.
+    /// EN:
+    /// Trains the network using backpropagation on a single example.
+    @alias("обучить")
+    function train(self: NeuralNetwork, inputs: array<number>, targets: array<number>) {
+        var current_inputs = inputs;
+        var layers = self.layers;
+        var num_layers = variable::get_list_length(layers);
+
+        // Прямой проход
+        for i in 0..num_layers {
+            var layer = layers[i];
+            layer = layer.forward(current_inputs);
+            current_inputs = layer.last_outputs;
+            layers[i] = layer;
+        }
+
+        var deltas: array<array<number>> = [];
+
+        // Дельты для выходного слоя
+        var last_layer = layers[num_layers - 1];
+        var output_deltas: array<number> = [];
+        for o in 0..last_layer.output_count {
+            var output = last_layer.last_outputs[o];
+            var target = targets[o];
+            var error = target - output;
+            var delta = error * (output * (1 - output));
+            output_deltas = variable::append_list(output_deltas, [delta]);
+        }
+        deltas = variable::append_list(deltas, [output_deltas]);
+
+        // Дельты для скрытых слоев
+        var next_layer_deltas = output_deltas;
+        if num_layers > 1 {
+            for layer_step in 0..num_layers - 1 {
+                var idx = num_layers - 2 - layer_step;
+                var current_layer = layers[idx];
+                var next_layer = layers[idx + 1];
+
+                var hidden_deltas: array<number> = [];
+                for j in 0..current_layer.output_count {
+                    var error_sum = 0;
+                    for k in 0..next_layer.output_count {
+                        var w = next_layer.weights[k][j];
+                        var d = next_layer_deltas[k];
+                        error_sum += w * d;
+                    }
+                    var output = current_layer.last_outputs[j];
+                    var delta = error_sum * (output * (1 - output));
+                    hidden_deltas = variable::append_list(hidden_deltas, [delta]);
+                }
+
+                deltas = variable::append_list(deltas, [hidden_deltas]);
+                next_layer_deltas = hidden_deltas;
+            }
+        }
+
+        // Обновление весов и смещений
+        for step_idx in 0..num_layers {
+            var idx = num_layers - 1 - step_idx;
+            var layer = layers[idx];
+            var layer_deltas = deltas[step_idx];
+
+            var weights = layer.weights;
+            var biases = layer.biases;
+            var last_inputs = layer.last_inputs;
+
+            for o_idx in 0..layer.output_count {
+                var delta = layer_deltas[o_idx];
+                var row = weights[o_idx];
+                for j in 0..layer.input_count {
+                    var input_val = last_inputs[j];
+                    var old_weight = row[j];
+                    var new_weight = old_weight + self.learning_rate * delta * input_val;
+                    row[j] = new_weight;
+                }
+                weights[o_idx] = row;
+
+                var old_bias = biases[o_idx];
+                var new_bias = old_bias + self.learning_rate * delta;
+                biases[o_idx] = new_bias;
+            }
+
+            layer.weights = weights;
+            layer.biases = biases;
+            layers[idx] = layer;
+        }
+
+        self.layers = layers;
+    }
+}
+
+@test
+function test_neural_network() {
+    var nn = NeuralNetwork([2, 3, 1], 0.5);
+    var pred = nn.predict([0, 1]);
+    nn.train([0, 1], [1]);
+}

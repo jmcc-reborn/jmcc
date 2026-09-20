@@ -1,0 +1,44 @@
+/// RU: Блок в игровом мире JustMC.
+/// EN: Block in the JustMC game world.
+@alias("блок")
+@lang_item
+export class block {
+    var id: text;
+
+    inline function __init__(id: text) -> block {
+        /* compiler built-in */
+    }
+
+    inline function __equals__(first: block, second: block) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: block, second: block) -> boolean {
+        return first.not_equals(second);
+    }
+
+    /// RU: Идентификатор типа блока.
+    /// EN: Block type identifier.
+    @alias("ид")
+    @alias("айди")
+    @getter
+    inline function id(self: block) -> text {
+        return "$self";
+    }
+
+    /// RU: Установка идентификатора типа блока.
+    /// EN: Sets the block type identifier.
+    @alias("ид")
+    @alias("айди")
+    @setter
+    inline function id(self: block, id: text) -> block {
+        /* compiler built-in */
+    }
+}
+
+@test
+function test_block_properties() {
+    var blk = block("minecraft:stone");
+    var bid = blk.id;
+    blk.id = "minecraft:dirt";
+}

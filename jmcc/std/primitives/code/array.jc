@@ -1,0 +1,239 @@
+/// RU: Псевдоним типа array.
+/// EN: Alias for the array type.
+@alias("список")
+export typealias list = array;
+
+/// RU: Псевдоним обобщенного типа array<T>.
+/// EN: Alias for the generic array<T> type.
+@alias("список")
+export typealias list<T> = array<T>;
+
+/// RU: Примитивный массив переменной длины с поддержкой операций над коллекциями.
+/// EN: Primitive dynamic array with support for collection operations.
+@alias("массив")
+@lang_item
+export class array<T> implements Iterable<T> {
+    /// RU:
+    /// Возвращает итератор по элементам массива.
+    /// EN:
+    /// Returns an iterator over the array elements.
+    @alias("итератор")
+    @alias("into_iter")
+    function iter(self: array<T>) -> ArrayIterator<T> {
+        return ArrayIterator(self);
+    }
+
+    inline function __add__(first: array<T>, second: array<T>) -> array<T> {
+        return variable::append_list(first, second);
+    }
+
+    inline function __multiply__(first: array<T>, second: number) -> array<T> {
+        var list = [];
+        for _ in 0..second {
+            list = variable::append_list(list, first);
+        }
+        return list;
+    }
+
+    inline function __equals__(first: array<T>, second: array<T>) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: array<T>, second: array<T>) -> boolean {
+        return first.not_equals(second);
+    }
+
+    inline function __greater__(first: array<T>, second: array<T>) -> boolean {
+        var length_first = variable::get_list_length(first);
+        var length_second = variable::get_list_length(second);
+        return length_first.greater(length_second);
+    }
+
+    inline function __less__(first: array<T>, second: array<T>) -> boolean {
+        var length_first = variable::get_list_length(first);
+        var length_second = variable::get_list_length(second);
+        return length_first.less(length_second);
+    }
+
+    inline function __greater_or_equals__(first: array<T>, second: array<T>) -> boolean {
+        var length_first = variable::get_list_length(first);
+        var length_second = variable::get_list_length(second);
+        return length_first.greater_or_equals(length_second);
+    }
+
+    inline function __less_or_equals__(first: array<T>, second: array<T>) -> boolean {
+        var length_first = variable::get_list_length(first);
+        var length_second = variable::get_list_length(second);
+        return length_first.less_or_equals(length_second);
+    }
+
+    inline function __contains__(first: array<T>, second: text) -> boolean {
+        return first.list_contains_value([second]);
+    }
+
+    @getter
+    inline function __subscript__(self: array<T>, index: number) -> T {
+        return self.get_list_value(index);
+    }
+
+    @getter
+    inline function __slice__(
+        self: array<T>,
+        first_index: number,
+        second_index: number,
+    ) -> array<T> {
+        return self.trim_list(first_index, second_index);
+    }
+
+    @setter
+    inline function __subscript__(self: array<T>, index: number, value: T) -> array<T> {
+        return self.set_list_value(index, value);
+    }
+
+    @setter
+    inline function __slice__(
+        self: array<T>,
+        first_index: number,
+        second_index: number,
+        value: array<T>,
+    ) {
+        for cdown, idx in first_index..=second_index {
+            var val = variable::get_list_value(value, cdown);
+            self.set_list_value(idx, val);
+        }
+    }
+
+    /// RU:
+    /// Добавляет элемент в конец массива.
+    /// EN:
+    /// Appends an element to the end of the array.
+    @alias("добавить")
+    inline function append(self: array<T>, value: T) -> array<T> {
+        return variable::append_list(self, [value]);
+    }
+
+    /// RU:
+    /// Вставляет элемент в конец массива.
+    /// EN:
+    /// Pushes an element to the end of the array.
+    @alias("вставить")
+    inline function push(self: array<T>, value: T) -> array<T> {
+        return variable::append_list(self, [value]);
+    }
+
+    /// RU:
+    /// Удаляет и возвращает последний элемент массива.
+    /// EN:
+    /// Removes and returns the last element of the array.
+    @alias("извлечь")
+    inline function pop(self: array<T>) -> T {
+        var last_idx = self.len() - 1;
+        var val: T;
+        variable::remove_list_value_at_index(val, self, self, last_idx);
+        return val;
+    }
+
+    /// RU:
+    /// Объединяет элементы массива в строку с указанным разделителем.
+    /// EN:
+    /// Joins array elements into a string using the separator.
+    @alias("объединить")
+    @alias("склеить")
+    inline function join(self: array<T>, sep: text = ", ") -> text {
+        var res = "";
+        var first = true;
+        for item in self {
+            if first {
+                res = "$item";
+                first = false;
+            } else {
+                res = "$res$sep$item";
+            }
+        }
+        return res;
+    }
+
+    /// RU:
+    /// Возвращает массив в обратном порядке.
+    /// EN:
+    /// Returns the array in reverse order.
+    @alias("перевернуть")
+    @alias("развернуть")
+    inline function reverse(self: array<T>) -> array<T> {
+        return variable::reverse_list(self);
+    }
+
+    /// RU:
+    /// Сортирует массив по возрастанию или убыванию.
+    /// EN:
+    /// Sorts the array ascending or descending.
+    @alias("сортировать")
+    inline function sort(self: array<T>, mode: text = "ASCENDING") -> array<T> {
+        return variable::sort_list(self, sort_mode = mode);
+    }
+
+    /// RU:
+    /// Перемешивает элементы массива в случайном порядке.
+    /// EN:
+    /// Randomizes the order of elements in the array.
+    @alias("перемешать")
+    inline function shuffle(self: array<T>) -> array<T> {
+        return variable::randomize_list_order(self);
+    }
+
+    /// RU:
+    /// Удаляет повторяющиеся элементы из массива.
+    /// EN:
+    /// Removes duplicate elements from the array.
+    @alias("удалить_дубликаты")
+    @alias("уникальные")
+    inline function dedup(self: array<T>) -> array<T> {
+        return variable::remove_list_duplicates(self);
+    }
+
+    /// RU:
+    /// Уплощает вложенные массивы.
+    /// EN:
+    /// Flattens nested arrays.
+    @alias("уплощить")
+    inline function flatten(self: array<T>, deep: text = "FALSE") -> array<T> {
+        return variable::flatten_list(self, deep = deep);
+    }
+
+    /// RU:
+    /// Проверяет, содержится ли значение в массиве.
+    /// EN:
+    /// Checks if the array contains the value.
+    @alias("содержит")
+    inline function contains(self: array<T>, value: T) -> boolean {
+        return variable::list_contains_value(self, [value], check_mode = "ANY");
+    }
+
+    /// RU:
+    /// Возвращает индекс первого вхождения значения в массиве.
+    /// EN:
+    /// Returns the index of the first occurrence of the value.
+    @alias("индекс")
+    inline function index_of(self: array<T>, value: T) -> number {
+        return variable::get_list_index_of_value(self, value, search_mode = "FIRST");
+    }
+
+    /// RU:
+    /// Возвращает случайный элемент из массива.
+    /// EN:
+    /// Returns a random element from the array.
+    @alias("случайный")
+    inline function random(self: array<T>) -> T {
+        return variable::get_list_random_value(self);
+    }
+
+    /// RU:
+    /// Возвращает количество элементов в массиве.
+    /// EN:
+    /// Returns the number of elements in the array.
+    @alias("длина")
+    @alias("размер")
+    inline function len(self: array<T>) -> number {
+        return self.get_list_length();
+    }
+}

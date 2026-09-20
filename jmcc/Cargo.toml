@@ -1,0 +1,45 @@
+[package]
+name = "jmcc"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[dependencies]
+# jmcdata = { path = "../jmcdata" }
+thiserror = "2.0"
+color-eyre = "0.6"
+log.workspace = true
+logos = "0.16"
+memchr = "2.8"
+id-arena = "2.3"
+lasso = "0.7"
+line-index = "0.1"
+text-size = "1.1"
+walkdir = "2.5"
+egg = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+jmcdata = { version = "0.1", path = "../jmcdata" }
+jmcmock = { version = "0.1", path = "../jmcmock" }
+litemap = "0.8"
+ordered-float = "5.3"
+simdnbt = "0.10"
+flate2 = "1.1"
+base64 = "0.23"
+text_components = { git = "https://github.com/suprohub/TextComponents.git", branch = "minimessage", features = ["nbt", "minimessage", "custom"] }
+clap = { version = "4.6", features = ["derive"] }
+tracing = { version = "0.1.44", features = ["release_max_level_debug"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+rayon = "1.10"
+icu = "2.0.0"
+annotate-snippets = "0.12.16"
+unicode-width = "0.2.2"
+
+[lints]
+workspace = true

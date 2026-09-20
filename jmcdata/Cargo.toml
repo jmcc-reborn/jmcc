@@ -1,0 +1,30 @@
+[package]
+name = "jmcdata"
+authors.workspace = true
+description.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[dependencies]
+heck = "0.5"
+litemap = { version = "0.8", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ordered-float = { version = "5.1", features = ["serde"] }
+phf = "0.14"
+
+[build-dependencies]
+heck = "0.5"
+proc-macro2 = "1.0"
+quote = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+phf = { version = "0.14", default-features = false }
+phf_codegen = "0.14"
+
+[lints]
+workspace = true

@@ -1,0 +1,44 @@
+function test_loops() {
+    var i = 0;
+    while i < 10 {
+        i += 1;
+        if i == 5 {
+            break;
+        }
+    }
+    player::message(i);
+
+    while not (i == 0) {
+        i -= 1;
+    }
+    player::message(i);
+
+    var list = [1, 2, 3];
+    var sum = 0;
+    for item in list {
+        sum += item;
+    }
+    player::message(sum);
+
+    var m = {"a": 10, "b": 20};
+    var map_sum = 0;
+    for k, v in m {
+        map_sum += v;
+    }
+    player::message(map_sum);
+
+    var reached_after = 0;
+    'outer: while true {
+        'inner: for item in list {
+            if item == 2 {
+                break 'outer;
+            }
+        }
+        reached_after = 1;
+    }
+    player::message(reached_after);
+}
+
+event<player_join> {
+    test_loops();
+}

@@ -1,0 +1,338 @@
+//! RU: Матричные математические операции и утилиты.
+//! EN: Matrix mathematical operations and utilities.
+
+/// RU:
+/// Представляет математическую матрицу и предоставляет связанные с ней операции.
+/// EN:
+/// Represents a mathematical matrix and provides related operations.
+@alias("Матрица")
+export class Matrix {
+    var data: array<array<number>>;
+    var rows: number;
+    var cols: number;
+
+    /// RU:
+    /// Создает новую матрицу на основе двумерного массива данных.
+    /// EN:
+    /// Initializes a new matrix with the given 2D array data.
+    function __init__(self: Matrix, data: array<array<number>>) -> Matrix {
+        self.data = data;
+        self.rows = data.len();
+
+        if self.rows > 0 {
+            var first_row = data[0];
+            self.cols = first_row.len();
+        } else {
+            self.cols = 0;
+        }
+        return self;
+    }
+
+    /// RU:
+    /// Возвращает строку по указанному индексу.
+    /// EN:
+    /// Gets the row at the specified index.
+    @getter
+    inline function __subscript__(self: Matrix, index: number) -> array<number> {
+        return self.data[index];
+    }
+
+    /// RU:
+    /// Проверяет равенство двух матриц.
+    /// EN:
+    /// Checks if two matrices are equal.
+    inline function __equals__(first: Matrix, second: Matrix) -> boolean {
+        if (first.rows != second.rows or first.cols != second.cols) {
+            return false;
+        }
+        for i in 0..first.rows {
+            var r1 = first.data[i];
+            var r2 = second.data[i];
+            for j in 0..first.cols {
+                if r1[j] != r2[j] {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /// RU:
+    /// Проверяет неравенство двух матриц.
+    /// EN:
+    /// Checks if two matrices are not equal.
+    inline function __not_equals__(first: Matrix, second: Matrix) -> boolean {
+        return not first.equals(second);
+    }
+
+    /// RU:
+    /// Складывает две матрицы.
+    /// EN:
+    /// Adds two matrices together.
+    inline function __add__(first: Matrix, second: Matrix) -> Matrix {
+        if (first.rows != second.rows or first.cols != second.cols) {
+            throw "Matrix dimensions must match for addition.";
+        }
+
+        var result_data: array<array<number>> = [];
+        for i in 0..first.rows {
+            var new_row: array<number> = [];
+            var row1 = first.data[i];
+            var row2 = second.data[i];
+            for j in 0..first.cols {
+                new_row = new_row.push(row1[j] + row2[j]);
+            }
+            result_data = result_data.push(new_row);
+        }
+        return Matrix(result_data);
+    }
+
+    /// RU:
+    /// Вычитает вторую матрицу из первой.
+    /// EN:
+    /// Subtracts the second matrix from the first.
+    inline function __subtract__(first: Matrix, second: Matrix) -> Matrix {
+        if (first.rows != second.rows or first.cols != second.cols) {
+            throw "Matrix dimensions must match for subtraction.";
+        }
+
+        var result_data: array<array<number>> = [];
+        for i in 0..first.rows {
+            var new_row: array<number> = [];
+            var row1 = first.data[i];
+            var row2 = second.data[i];
+            for j in 0..first.cols {
+                new_row = new_row.push(row1[j] - row2[j]);
+            }
+            result_data = result_data.push(new_row);
+        }
+        return Matrix(result_data);
+    }
+
+    /// RU:
+    /// Перемножает две матрицы.
+    /// EN:
+    /// Multiplies two matrices.
+    inline function __multiply__(first: Matrix, second: Matrix) -> Matrix {
+        if first.cols != second.rows {
+            throw "Number of columns in A must match number of rows in B.";
+        }
+
+        var result_data: array<array<number>> = [];
+        for i in 0..first.rows {
+            var new_row: array<number> = [];
+            for j in 0..second.cols {
+                var sum = 0;
+                for k in 0..first.cols {
+                    var val1 = first.data[i][k];
+                    var val2 = second.data[k][j];
+                    sum += val1 * val2;
+                }
+                new_row = new_row.push(sum);
+            }
+            result_data = result_data.push(new_row);
+        }
+        return Matrix(result_data);
+    }
+
+    /// RU:
+    /// Возвращает размерность матрицы в виде массива `[строки, столбцы]`.
+    /// EN:
+    /// Returns the dimensions of the matrix as an array.
+    @alias("форма")
+    @alias("размерность")
+    @getter
+    inline function shape(self: Matrix) -> array<number> {
+        return [self.rows, self.cols];
+    }
+
+    /// RU:
+    /// Проверяет, является ли матрица квадратной.
+    /// EN:
+    /// Checks if the matrix has the same number of rows and columns.
+    @alias("квадратная")
+    @getter
+    inline function is_square(self: Matrix) -> boolean {
+        return self.rows == self.cols;
+    }
+
+    /// RU:
+    /// Вычисляет след матрицы (сумму диагональных элементов).
+    /// EN:
+    /// Calculates the sum of the diagonal elements.
+    @alias("след")
+    @getter
+    inline function trace(self: Matrix) -> number {
+        if not self.is_square() {
+            return 0;
+        }
+        var sum = 0;
+        for i in 0..self.rows {
+            var row = self.data[i];
+            sum += row[i];
+        }
+        return sum;
+    }
+
+    /// RU:
+    /// Проверяет, являются ли все элементы матрицы нулевыми.
+    /// EN:
+    /// Checks if all elements in the matrix are zero.
+    @alias("нулевая")
+    @getter
+    inline function is_zero(self: Matrix) -> boolean {
+        for row in self.data {
+            for val in row {
+                if val != 0 {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /// RU:
+    /// Проверяет, является ли матрица диагональной.
+    /// EN:
+    /// Checks if the matrix is a diagonal matrix.
+    @alias("диагональная")
+    @getter
+    inline function is_diagonal(self: Matrix) -> boolean {
+        if not self.is_square() {
+            return false;
+        }
+        for i in 0..self.rows {
+            var row = self.data[i];
+            for j in 0..self.cols {
+                if i != j and row[j] != 0 {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /// RU:
+    /// Проверяет, является ли матрица симметричной.
+    /// EN:
+    /// Checks if the matrix is symmetric.
+    @alias("симметричная")
+    @getter
+    inline function is_symmetric(self: Matrix) -> boolean {
+        if not self.is_square() {
+            return false;
+        }
+        var transposed = self.transpose();
+        return self.equals(transposed);
+    }
+
+    /// RU:
+    /// Вычисляет норму Фробениуса для матрицы.
+    /// EN:
+    /// Calculates the Frobenius norm of the matrix.
+    @alias("норма_фробениуса")
+    function norm_frobenius(self: Matrix) -> number {
+        var sum_sq = 0;
+        for row in self.data {
+            for val in row {
+                sum_sq += val.pow(2);
+            }
+        }
+        return sum_sq.sqrt();
+    }
+
+    /// RU:
+    /// Возвращает транспонированную матрицу.
+    /// EN:
+    /// Returns the transpose of the matrix.
+    @alias("транспонировать")
+    function transpose(self: Matrix) -> Matrix {
+        var result_data: array<array<number>> = [];
+        for j in 0..self.cols {
+            var new_row: array<number> = [];
+            for i in 0..self.rows {
+                var val = self.data[i][j];
+                new_row = new_row.push(val);
+            }
+            result_data = result_data.push(new_row);
+        }
+        return Matrix(result_data);
+    }
+
+    /// RU:
+    /// Умножает матрицу на скаляр.
+    /// EN:
+    /// Multiplies the matrix by a scalar value.
+    @alias("умножить_на_число")
+    function multiply_scalar(self: Matrix, scalar: number) -> Matrix {
+        var result_data: array<array<number>> = [];
+        for row in self.data {
+            var new_row: array<number> = [];
+            for val in row {
+                new_row = new_row.push(val * scalar);
+            }
+            result_data = result_data.push(new_row);
+        }
+        return Matrix(result_data);
+    }
+}
+
+/// RU:
+/// Создает матрицу указанного размера, заполненную нулями.
+/// EN:
+/// Creates a matrix filled with zeros.
+@alias("матрица_нули")
+export function matrix_zeros(rows: number, cols: number) -> Matrix {
+    var data: array<array<number>> = [];
+    for i in 0..rows {
+        var row: array<number> = [];
+        for j in 0..cols {
+            row = row.push(0);
+        }
+        data = data.push(row);
+    }
+    return Matrix(data);
+}
+
+/// RU:
+/// Создает матрицу указанного размера, заполненную единицами.
+/// EN:
+/// Creates a matrix filled with ones.
+@alias("матрица_единицы")
+export function matrix_ones(rows: number, cols: number) -> Matrix {
+    var data: array<array<number>> = [];
+    for i in 0..rows {
+        var row: array<number> = [];
+        for j in 0..cols {
+            row = row.push(1);
+        }
+        data = data.push(row);
+    }
+    return Matrix(data);
+}
+
+/// RU:
+/// Создает единичную матрицу указанного размера с заданным значением на диагонали.
+/// EN:
+/// Creates an identity matrix with the given diagonal value.
+@alias("матрица_единичная")
+export function matrix_identity(size: number, diagonal_value: number = 1) -> Matrix {
+    var data: array<array<number>> = [];
+    for i in 0..size {
+        var row: array<number> = [];
+        for j in 0..size {
+            if i == j {
+                row = row.push(diagonal_value);
+            } else {
+                row = row.push(0);
+            }
+        }
+        data = data.push(row);
+    }
+    return Matrix(data);
+}
+
+@test
+function test_matrix_creation() {
+    var m1 = Matrix([[1, 2], [3, 4]]);
+}

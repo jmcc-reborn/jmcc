@@ -1,0 +1,202 @@
+//! RU: Модуль безопасности для обнаружения неавторизованных клиентских модификаций (читов).
+//! EN: Security module for detecting unauthorized client modifications.
+
+/// RU: Обнаруживает и управляет игроками, использующими запрещенные модификации.
+/// EN: Detects and manages players using unauthorized modifications.
+@alias("ПроверкаМодов")
+@alias("ЧекерМодов")
+export class ModChecker {
+    var allowedTranslations: map<text, boolean>;
+    var bad_players: array<text>;
+    var player_mods: map<text, array<text>>;
+
+    /// RU:
+    /// Инициализирует модуль проверки модов и регистрирует стандартный черный список ключей.
+    /// EN:
+    /// Initializes the mod checker and registers default blacklisted keys.
+    function __init__(self: ModChecker) -> ModChecker {
+        self.allowedTranslations = {};
+        self.bad_players = [];
+        self.player_mods = {};
+        self.register_defaults();
+        return self;
+    }
+
+    /// RU:
+    /// Добавляет ключ локализации в разрешенный список.
+    /// EN:
+    /// Adds a translation key to the allowed list.
+    @alias("зарегистрировать_мод")
+    function register_mod(self: ModChecker, translation_key: text) {
+        self.allowedTranslations[translation_key] = true;
+    }
+
+    /// RU:
+    /// Регистрирует известные ключи локализации чит-клиентов.
+    /// EN:
+    /// Registers known cheat client translation keys.
+    @alias("зарегистрировать_стандартные")
+    function register_defaults(self: ModChecker) {
+        var keys: array<text> = [
+            "gui.xaero_zoom_in",
+            "key.zergatul.cheatutils.reserved0",
+            "key.meteor-client.open-gui",
+            "key.wurst.zoom",
+            "liquidbounce.generic.enabled",
+            "key.killaura",
+            "key.lumina.open_click_gui",
+            "jex.name",
+            "key.hypnotic-client.open-click-gui",
+            "key.flymod.toggle",
+            "descriptions.client.thundergui",
+            "key.playerhighlighter.toggle",
+            "text.nea.rotationlock.NONE",
+            "key.freecam.toggle",
+        ];
+
+        for key in keys {
+            self.register_mod(key);
+        }
+    }
+
+    /// RU:
+    /// Обработчик входа игрока на сервер.
+    /// EN:
+    /// Event handler triggered when a player joins the server.
+    @alias("при_входе")
+    function on_join(self: ModChecker) {
+        var player_name = value::name<default>();
+
+        if not self.player_mods.map_has_key(player_name) {
+            self.player_mods[player_name] = [];
+        }
+
+        if player::has_privilege("DEVELOPER") {
+            player::set_chat_completions(["\\modcheck", "\\bplist"], "ADD");
+        }
+
+        player::set_experience(999, "LEVEL");
+
+        for key in self.allowedTranslations {
+            var mod_item = item(id = "minecraft:emerald", name = m"<!italic><lang:${key}>");
+            player::open_working_menu("ANVIL");
+            player::set_inventory_menu_item(mod_item, 0);
+            player::set_inventory_menu_item("%air%", 0);
+            player::close_inventory();
+            code::wait(1, "TICKS");
+        }
+
+        player::set_experience(0, "LEVEL");
+        self.check_player(player_name, 0);
+    }
+
+    /// RU:
+    /// Обработчик переименования предмета в наковальне для детекта модов.
+    /// EN:
+    /// Event handler for detecting mod translations via anvil renaming.
+    @alias("при_переименовании_наковальней")
+    function on_anvil_rename(self: ModChecker) {
+        var player_name = value::name<default>();
+        var input = value::event_anvil_rename_input();
+
+        if not self.allowedTranslations.map_has_key(input) {
+            if self.player_mods.map_has_key(player_name) {
+                self.player_mods[player_name].append_value(input);
+            } else {
+                self.player_mods[player_name] = [input];
+            }
+        }
+    }
+
+    /// RU:
+    /// Обработчик команд чата для проверки модов.
+    /// EN:
+    /// Event handler for chat commands related to mod checking.
+    @alias("при_сообщении")
+    function on_chat(self: ModChecker) {
+        var msg = value::event_chat_message();
+
+        if msg.text_starts_with(["\\modcheck"]) {
+            world::cancel_event();
+            controller::catch_exception() {
+                var target_name = variable::trim_text(msg, 10, 99999);
+                self.check_player(target_name, value::name<default>());
+            }
+        }
+
+        if msg.text_starts_with(["\\bplist"]) {
+            player::message(
+                [
+                    "&#ABC4D6⛨ &8› &f&lСписок игроков с подозрительными модами:",
+                    self.bad_players,
+                ],
+                merging = "SEPARATE_LINES",
+            );
+            world::cancel_event();
+        }
+    }
+
+    /// RU:
+    /// Проверяет конкретного игрока на наличие запрещенных модов.
+    /// EN:
+    /// Checks a specific player for unauthorized mods.
+    @alias("проверить_игрока")
+    function check_player(self: ModChecker, target_name: text, sender: any) {
+        var detectMod = 0;
+        select::player_by_name([target_name]);
+
+        if value::selection_size() == 0 {
+            return;
+        }
+
+        var mods_list = self.player_mods[target_name];
+        if mods_list == 0 {
+            mods_list = [];
+            self.player_mods[target_name] = mods_list;
+        }
+
+        for loc in mods_list {
+            if not self.allowedTranslations.map_has_key(loc) {
+                detectMod = loc;
+                self.bad_players.append_value(
+                    "&#FF6E6E ◦ &f&n${target_name}&#7A8085 • &f${detectMod} &#7A8085(&7${detectMod}&#7A8085)",
+                );
+
+                player::message<all_players>(
+                    [
+                        "&#FF6E6E⚠ &8› &f&n${target_name}&#7A8085 • &7",
+                        detectMod,
+                        "&r &#7A8085(&7",
+                        detectMod,
+                        "&#7A8085)",
+                    ],
+                    merging = "CONCATENATION",
+                );
+                player::play_sound_from_entity<all_players>(
+                    value::name<current>(),
+                    [sound("minecraft:block.note_block.bass", 100, 1, source = "MASTER")],
+                );
+            }
+        }
+
+        if detectMod.equals([0]) {
+            select::player_by_conditional(player::name_equals([sender]));
+            player::message<all_players>(
+                [
+                    "&#A6FF6E✔ &8› &f&n${target_name}&#7A8085 • &f",
+                    "Не обнаружено подозрительных модов",
+                ],
+                merging = "CONCATENATION",
+            );
+            player::play_sound<all_players>(
+                sound("minecraft:block.note_block.bell", 100, 1, source = "MASTER"),
+                value::location<default>(),
+            );
+        }
+    }
+}
+
+@test
+function test_modchecker_init() {
+    var mc = ModChecker();
+}

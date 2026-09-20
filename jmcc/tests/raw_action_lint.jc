@@ -1,0 +1,38 @@
+// Raw actions that have a syntactic form in the language.
+//
+// Every `variable::…` and `code::call_function` line here warns ("Raw action '…': write '…'
+// instead"); the operator and direct-call lines do not. `std` never warns: those actions are
+// how it implements the operators (`__add__` in `number.jc` is `variable::add`).
+//
+//   RUST_LOG=warn cargo run -p jmcc -- compile jmcc/tests/raw_action_lint.jc --edition 2026 --emit json
+// Expects exactly four warnings, all carrying this file's path.
+//
+// The value arrives as a process parameter on purpose: constant folding would put a literal in
+// the `variable` slot, which MIR rejects with `unresolved positional argument 2`.
+
+function helper() -> number {
+    return 1
+}
+
+process raw(n: number) {
+    // Warned about: each of these has an operator.
+    variable::add(n, 2)
+    variable::subtract(n, 1)
+    variable::multiply(n, 3)
+    // Not warned about.
+    n = n + 2 * 3
+    if n > 0 {
+        n = n - 1
+    }
+}
+
+event<world_start> {
+    raw(1)
+}
+
+event<player_join> {
+    // The name is passed as text, so nothing resolves it.
+    code::call_function("helper")
+    // Not warned about.
+    game var f: number = helper()
+}

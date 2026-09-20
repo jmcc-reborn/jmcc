@@ -1,0 +1,531 @@
+{
+  "handlers": [
+    {
+      "type": "function",
+      "position": 5,
+      "operations": [
+        {
+          "action": "if_variable_equals",
+          "values": [
+            {
+              "name": "value",
+              "value": {
+                "type": "variable",
+                "variable": "size",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "compare",
+              "value": {
+                "type": "array",
+                "values": [
+                  {
+                    "type": "number",
+                    "number": 0
+                  }
+                ]
+              }
+            }
+          ],
+          "operations": [
+            {
+              "action": "control_return_function",
+              "values": []
+            }
+          ]
+        },
+        {
+          "action": "set_variable_add",
+          "values": [
+            {
+              "name": "variable",
+              "value": {
+                "type": "variable",
+                "variable": "jmcc.193",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "value",
+              "value": {
+                "type": "array",
+                "values": [
+                  {
+                    "type": "variable",
+                    "variable": "src",
+                    "scope": "line"
+                  },
+                  {
+                    "type": "variable",
+                    "variable": "size",
+                    "scope": "line"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "action": "set_variable_value",
+          "values": [
+            {
+              "name": "variable",
+              "value": {
+                "type": "variable",
+                "variable": "src_end",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "value",
+              "value": {
+                "type": "variable",
+                "variable": "jmcc.193",
+                "scope": "line"
+              }
+            }
+          ]
+        },
+        {
+          "action": "set_variable_subtract",
+          "values": [
+            {
+              "name": "variable",
+              "value": {
+                "type": "variable",
+                "variable": "jmcc.194",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "value",
+              "value": {
+                "type": "array",
+                "values": [
+                  {
+                    "type": "variable",
+                    "variable": "src_end",
+                    "scope": "line"
+                  },
+                  {
+                    "type": "number",
+                    "number": 1
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "action": "set_variable_value",
+          "values": [
+            {
+              "name": "variable",
+              "value": {
+                "type": "variable",
+                "variable": "src_end",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "value",
+              "value": {
+                "type": "variable",
+                "variable": "jmcc.194",
+                "scope": "line"
+              }
+            }
+          ]
+        },
+        {
+          "action": "set_variable_add",
+          "values": [
+            {
+              "name": "variable",
+              "value": {
+                "type": "variable",
+                "variable": "jmcc.195",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "value",
+              "value": {
+                "type": "array",
+                "values": [
+                  {
+                    "type": "variable",
+                    "variable": "dest",
+                    "scope": "line"
+                  },
+                  {
+                    "type": "variable",
+                    "variable": "size",
+                    "scope": "line"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "action": "set_variable_value",
+          "values": [
+            {
+              "name": "variable",
+              "value": {
+                "type": "variable",
+                "variable": "dest_end",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "value",
+              "value": {
+                "type": "variable",
+                "variable": "jmcc.195",
+                "scope": "line"
+              }
+            }
+          ]
+        },
+        {
+          "action": "set_variable_subtract",
+          "values": [
+            {
+              "name": "variable",
+              "value": {
+                "type": "variable",
+                "variable": "jmcc.196",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "value",
+              "value": {
+                "type": "array",
+                "values": [
+                  {
+                    "type": "variable",
+                    "variable": "dest_end",
+                    "scope": "line"
+                  },
+                  {
+                    "type": "number",
+                    "number": 1
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "action": "set_variable_value",
+          "values": [
+            {
+              "name": "variable",
+              "value": {
+                "type": "variable",
+                "variable": "dest_end",
+                "scope": "line"
+              }
+            },
+            {
+              "name": "value",
+              "value": {
+                "type": "variable",
+                "variable": "jmcc.196",
+                "scope": "line"
+              }
+            }
+          ]
+        },
+        {
+          "action": "else",
+          "values": [],
+          "operations": [
+            {
+              "action": "set_variable_value",
+              "values": [
+                {
+                  "name": "variable",
+                  "value": {
+                    "type": "variable",
+                    "variable": "offset",
+                    "scope": "line"
+                  }
+                },
+                {
+                  "name": "value",
+                  "value": {
+                    "type": "number",
+                    "number": 0
+                  }
+                }
+              ]
+            },
+            {
+              "action": "repeat_while",
+              "values": [],
+              "operations": [
+                {
+                  "action": "set_variable_add",
+                  "values": [
+                    {
+                      "name": "variable",
+                      "value": {
+                        "type": "variable",
+                        "variable": "jmcc.205",
+                        "scope": "line"
+                      }
+                    },
+                    {
+                      "name": "value",
+                      "value": {
+                        "type": "array",
+                        "values": [
+                          {
+                            "type": "variable",
+                            "variable": "src",
+                            "scope": "line"
+                          },
+                          {
+                            "type": "variable",
+                            "variable": "size",
+                            "scope": "line"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "action": "set_variable_value",
+                  "values": [
+                    {
+                      "name": "variable",
+                      "value": {
+                        "type": "variable",
+                        "variable": "cur_src",
+                        "scope": "line"
+                      }
+                    },
+                    {
+                      "name": "value",
+                      "value": {
+                        "type": "variable",
+                        "variable": "jmcc.205",
+                        "scope": "line"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "action": "set_variable_add",
+                  "values": [
+                    {
+                      "name": "variable",
+                      "value": {
+                        "type": "variable",
+                        "variable": "jmcc.206",
+                        "scope": "line"
+                      }
+                    },
+                    {
+                      "name": "value",
+                      "value": {
+                        "type": "array",
+                        "values": [
+                          {
+                            "type": "variable",
+                            "variable": "dest",
+                            "scope": "line"
+                          },
+                          {
+                            "type": "variable",
+                            "variable": "size",
+                            "scope": "line"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "action": "set_variable_value",
+                  "values": [
+                    {
+                      "name": "variable",
+                      "value": {
+                        "type": "variable",
+                        "variable": "cur_dest",
+                        "scope": "line"
+                      }
+                    },
+                    {
+                      "name": "value",
+                      "value": {
+                        "type": "variable",
+                        "variable": "jmcc.206",
+                        "scope": "line"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "action": "set_variable_divide",
+                  "values": [
+                    {
+                      "name": "variable",
+                      "value": {
+                        "type": "variable",
+                        "variable": "jmcc.207",
+                        "scope": "line"
+                      }
+                    },
+                    {
+                      "name": "value",
+                      "value": {
+                        "type": "array",
+                        "values": [
+                          {
+                            "type": "variable",
+                            "variable": "cur_src",
+                            "scope": "line"
+                          },
+                          {
+                            "type": "variable",
+                            "variable": "mem_chunk_size",
+                            "scope": "game"
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "name": "division_mode",
+                      "value": {
+                        "type": "enum",
+                        "enum": "FLOOR"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "action": "set_variable_value",
+                  "values": [
+                    {
+                      "name": "variable",
+                      "value": {
+                        "type": "variable",
+                        "variable": "cur_src_chunk",
+                        "scope": "line"
+                      }
+                    },
+                    {
+                      "name": "value",
+                      "value": {
+                        "type": "variable",
+                        "variable": "jmcc.207",
+                        "scope": "line"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "action": "call_function",
+                  "values": [
+                    {
+                      "name": "function_name",
+                      "value": {
+                        "type": "text",
+                        "text": "jmcc.0",
+                        "parsing": "legacy"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "conditional": {
+                "action": "if_variable_less",
+                "is_inverted": false
+              }
+            }
+          ]
+        }
+      ],
+      "name": "memcpy2",
+      "values": [
+        {
+          "name": "parameters",
+          "value": {
+            "type": "array",
+            "values": [
+              {
+                "type": "parameter",
+                "name": "dest",
+                "type_key": "singular",
+                "description": "{\"translations\":{}}",
+                "is_required": "true",
+                "slot": 0,
+                "description_slot": -1,
+                "value_type": "number",
+                "default_value": "{}"
+              },
+              {
+                "type": "parameter",
+                "name": "src",
+                "type_key": "singular",
+                "description": "{\"translations\":{}}",
+                "is_required": "true",
+                "slot": 1,
+                "description_slot": -1,
+                "value_type": "number",
+                "default_value": "{}"
+              },
+              {
+                "type": "parameter",
+                "name": "size",
+                "type_key": "singular",
+                "description": "{\"translations\":{}}",
+                "is_required": "true",
+                "slot": 2,
+                "description_slot": -1,
+                "value_type": "number",
+                "default_value": "{}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "description",
+          "value": {
+            "type": "array",
+            "values": [
+              {
+                "type": "text",
+                "text": "&fMessage 'function.generator.arguments' not found, inserts=None&r",
+                "parsing": "legacy"
+              },
+              {
+                "type": "text",
+                "text": " dest: \u0427\u0438\u0441\u043b\u043e",
+                "parsing": "legacy"
+              },
+              {
+                "type": "text",
+                "text": " src: \u0427\u0438\u0441\u043b\u043e",
+                "parsing": "legacy"
+              },
+              {
+                "type": "text",
+                "text": " size: \u0427\u0438\u0441\u043b\u043e",
+                "parsing": "legacy"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

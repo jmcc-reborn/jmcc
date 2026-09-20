@@ -1,0 +1,202 @@
+/// RU: Тип сообщения в диалоге.
+/// EN: Message type in a dialog.
+@alias("ТипСообщения")
+export enum MessageType {
+    TEXT,
+    WAIT,
+    AUDIO
+}
+
+/// RU: Тип панели для отображения диалога.
+/// EN: Bar type for displaying the dialog.
+@alias("ТипПанелиДиалога")
+@alias("ТипПанели")
+export enum DialogBarType {
+    ACTION,
+    BOSS,
+    SUBTITLE
+}
+
+/// RU: Сообщение в диалоге.
+/// EN: Message in a dialog.
+@alias("СообщениеДиалога")
+export class DialogMessage {
+    var type: MessageType;
+    var content: any;
+    var duration: number;
+
+    /// RU:
+    /// Создает сообщение диалога.
+    /// EN:
+    /// Initializes a dialog message.
+    function __init__(
+        self: DialogMessage,
+        type: MessageType = MessageType.TEXT,
+        content: any = "",
+        duration: number = 40,
+    ) -> DialogMessage {
+        self.type = type;
+        self.content = content;
+        self.duration = duration;
+        return self;
+    }
+}
+
+/// RU: Система диалогов с эффектом печатающегося текста и звуками.
+/// EN: Dialog system with typewriter text effect and sounds.
+@alias("Диалог")
+export class Dialog {
+    var target: text;
+    var messages: array<DialogMessage>;
+    var prefix: text;
+    var sounds: array<sound>;
+    var speed: number;
+    var comma_delay: number;
+    var end_delay: number;
+    var space_delay: number;
+    var bar_type: DialogBarType;
+    var current_id: number;
+
+    /// RU:
+    /// Инициализирует диалог с заданным списком сообщений.
+    /// EN:
+    /// Initializes a dialog with the given message list.
+    function __init__(self: Dialog, target: text, messages: array) -> Dialog {
+        self.target = target;
+        self.messages = messages;
+        self.prefix = "";
+        self.sounds = [sound("minecraft:block.stone.place", 999, 1, source = "MASTER")];
+        self.speed = 1;
+        self.comma_delay = 3;
+        self.end_delay = 8;
+        self.space_delay = 2;
+        self.bar_type = DialogBarType.ACTION;
+        self.current_id = 0;
+        return self;
+    }
+
+    /// RU:
+    /// Настраивает параметры отображения диалога.
+    /// EN:
+    /// Configures dialog display parameters.
+    @alias("настроить")
+    function configure(
+        self: Dialog,
+        prefix: text = "",
+        type_sounds: array<sound> = [
+            sound("minecraft:block.stone.place", 999, 1, source = "MASTER"),
+        ],
+        speed: number = 1,
+        comma_delay: number = 3,
+        end_delay: number = 8,
+        space_delay: number = 2,
+        bar_type: DialogBarType = DialogBarType.ACTION,
+    ) {
+        self.prefix = prefix;
+        self.sounds = type_sounds;
+        self.speed = speed;
+        self.comma_delay = comma_delay;
+        self.end_delay = end_delay;
+        self.space_delay = space_delay;
+        self.bar_type = bar_type;
+    }
+
+    /// RU:
+    /// Запускает воспроизведение диалога.
+    /// EN:
+    /// Starts playing the dialog.
+    @alias("начать")
+    @alias("запустить")
+    process start(self: Dialog) {
+        self.current_id += 1;
+        var current_id: number = self.current_id;
+
+        for msg in self.messages {
+            if self.current_id != current_id {
+                break;
+            }
+
+            var current_msg = msg;
+            var msg_type = current_msg.type;
+
+            match msg_type {
+                MessageType.TEXT => {
+                    var content = current_msg.content as text;
+                    var displayed = self.prefix;
+
+                    for i in 0..content.len() {
+                        if self.current_id != current_id {
+                            break;
+                        }
+
+                        var char = content[i];
+                        displayed = "$displayed$char";
+
+                        match self.bar_type {
+                            DialogBarType.BOSS => {
+                                player::set_boss_bar<default>("dialog_bar", displayed, 0);
+                            }
+                            DialogBarType.SUBTITLE => {
+                                player::send_title<default>("", displayed, 0, 20, 0);
+                            }
+                            _ => player::send_action_bar<default>(displayed),
+                        }
+
+                        if self.sounds.len() > 0 {
+                            var snd = self.sounds.random();
+                            player::play_sound<default>(snd, value::location());
+                        }
+
+                        match char {
+                            "." | "!" | "?" => code::wait(self.end_delay),
+                            "," => code::wait(self.comma_delay),
+                            " " => code::wait(self.space_delay),
+                            _ => code::wait(self.speed),
+                        }
+                    }
+                    code::wait(current_msg.duration);
+                }
+                MessageType.WAIT => code::wait(current_msg.duration),
+                MessageType.AUDIO => {
+                    player::play_sound<default>(current_msg.content as sound, value::location());
+                    code::wait(current_msg.duration);
+                }
+                _ => {}
+            }
+        }
+
+        if self.current_id == current_id {
+            match self.bar_type {
+                DialogBarType.BOSS => player::remove_boss_bar<default>("dialog_bar"),
+                DialogBarType.SUBTITLE => player::send_title<default>("", "", 0, 0, 0),
+                _ => player::send_action_bar<default>(""),
+            }
+        }
+    }
+
+    /// RU:
+    /// Пропускает текущий диалог.
+    /// EN:
+    /// Skips the current dialog.
+    @alias("пропустить")
+    function skip(self: Dialog) {
+        self.current_id += 1;
+        match self.bar_type {
+            DialogBarType.BOSS => player::remove_boss_bar<default>("dialog_bar"),
+            DialogBarType.SUBTITLE => player::send_title<default>("", "", 0, 0, 0),
+            _ => player::send_action_bar<default>(""),
+        }
+    }
+}
+
+@test
+function test_dialog_creation() {
+    var messages = [
+        DialogMessage(MessageType.TEXT, "Привет!", 10),
+        DialogMessage(MessageType.AUDIO, sound("minecraft:entity.player.levelup", 1, 1), 5),
+        DialogMessage(MessageType.TEXT, "Как дела?", 10),
+    ];
+
+    var dialog = Dialog("Dev", messages);
+    dialog.configure(prefix = "&6[NPC]&f: ");
+}

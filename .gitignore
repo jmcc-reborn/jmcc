@@ -1,0 +1,23 @@
+target/
+/jmc-analyzer/out
+/jmc-analyzer/vscode/syntaxes
+/jmc-analyzer/vscode/language-configuration.json
+
+# Compiler artifacts
+*.ast
+*.hir
+*.mir
+*/out.json
+*/test.txt
+
+# Agent configs
+/.agents
+/.claude
+skills-lock.json
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/

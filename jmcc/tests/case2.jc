@@ -1,0 +1,7 @@
+event<player_join> {
+    var a = 1;
+    var b = 0;
+    if b == 1 or a == 1 {
+        player::message("test")
+    }
+}

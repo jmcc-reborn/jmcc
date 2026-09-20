@@ -1,0 +1,206 @@
+/// RU: Предмет в инвентаре или игровом мире JustMC.
+/// EN: Item in inventory or the JustMC game world.
+@alias("предмет")
+@lang_item
+export class item {
+    var id: text;
+    var name: text;
+    var count: number;
+    var lore: array<text>;
+    var nbt: text;
+    var custom_tags: map<text, text>;
+    var durability: number;
+
+    inline function __init__(
+        id: text,
+        name: text = "",
+        count: number = 1,
+        lore: array<text> = [],
+        nbt: text = "",
+        custom_tags: map<text, text> = m{},
+    ) -> item {
+        /* compiler built-in */
+    }
+
+    inline function __equals__(first: item, second: item) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: item, second: item) -> boolean {
+        return first.not_equals(second);
+    }
+
+    /// RU: Идентификатор предмета.
+    /// EN: Item identifier.
+    @alias("ид")
+    @alias("айди")
+    @getter
+    inline function id(self: item) -> text {
+        return self.get_item_type("id");
+    }
+
+    /// RU: Отображаемое имя предмета.
+    /// EN: Display name of the item.
+    @alias("имя")
+    @alias("название")
+    @getter
+    inline function name(self: item) -> text {
+        return self.get_item_name();
+    }
+
+    /// RU: Количество предметов в стопке.
+    /// EN: Amount of items in the stack.
+    @alias("количество")
+    @alias("число")
+    @getter
+    inline function count(self: item) -> number {
+        return self.get_item_amount();
+    }
+
+    /// RU: Описание (лор) предмета.
+    /// EN: Lore lines of the item.
+    @alias("описание")
+    @getter
+    inline function lore(self: item) -> array {
+        return self.get_item_lore();
+    }
+
+    /// RU: NBT-данные предмета.
+    /// EN: NBT data of the item.
+    @alias("нбт")
+    @getter
+    inline function nbt(self: item) {
+        return self.get_item_nbt_tags("ALL");
+    }
+
+    /// RU: Пользовательские теги предмета.
+    /// EN: Custom tags of the item.
+    @alias("теги")
+    @getter
+    inline function tags(self: item) {
+        return self.get_item_custom_tags();
+    }
+
+    /// RU: Пользовательские теги предмета.
+    /// EN: Custom tags of the item.
+    @alias("пользовательские_теги")
+    @getter
+    inline function custom_tags(self: item) {
+        return self.get_item_custom_tags();
+    }
+
+    /// RU: Установка идентификатора предмета.
+    /// EN: Sets the item identifier.
+    @alias("ид")
+    @alias("айди")
+    @setter
+    inline function id(self: item, type: text) -> item {
+        self.set_item_type(type);
+        return self;
+    }
+
+    /// RU: Установка имени предмета.
+    /// EN: Sets the item display name.
+    @alias("имя")
+    @alias("название")
+    @setter
+    inline function name(self: item, name: text) -> item {
+        self = self.set_item_name(name);
+        return self;
+    }
+
+    /// RU: Установка количества предметов.
+    /// EN: Sets the item amount.
+    @alias("количество")
+    @alias("число")
+    @setter
+    inline function count(self: item, count: number) -> item {
+        self = self.set_item_amount(count);
+        return self;
+    }
+
+    /// RU: Установка описания (лора) предмета.
+    /// EN: Sets the item lore.
+    @alias("описание")
+    @setter
+    inline function lore(self: item, lore: array) -> item {
+        self = self.set_item_lore(lore);
+        return self;
+    }
+
+    /// RU: Установка тегов предмета.
+    /// EN: Sets the item tags.
+    @alias("теги")
+    @setter
+    inline function tags(self: item, tags: map) -> item {
+        repeat::for_each_map_entry(tags) { key, value ->
+            self = self.set_item_custom_tag(key, value);
+        }
+        return self;
+    }
+
+    /// RU: Установка пользовательских тегов предмета.
+    /// EN: Sets the item custom tags.
+    @alias("пользовательские_теги")
+    @setter
+    inline function custom_tags(self: item, tags: map) -> item {
+        repeat::for_each_map_entry(tags) { key, value ->
+            self = self.set_item_custom_tag(key, value);
+        }
+        return self;
+    }
+
+    /// RU: Оставшаяся прочность предмета.
+    /// EN: Remaining durability of the item.
+    @alias("прочность")
+    @getter
+    inline function durability(self: item) -> number {
+        return variable::get_item_durability(self, "REMAINING");
+    }
+
+    /// RU: Установка прочности предмета.
+    /// EN: Sets the item durability.
+    @alias("прочность")
+    @setter
+    inline function durability(self: item, value: number) -> item {
+        return variable::set_item_durability(self, value, "REMAINING");
+    }
+
+    /// RU:
+    /// Добавляет зачарование к предмету.
+    /// EN:
+    /// Adds an enchantment to the item.
+    @alias("добавить_зачарование")
+    inline function add_enchantment(self: item, ench: text, level: number) -> item {
+        return variable::add_item_enchantment(self, ench, level);
+    }
+
+    /// RU:
+    /// Удаляет зачарование с предмета.
+    /// EN:
+    /// Removes an enchantment from the item.
+    @alias("удалить_зачарование")
+    inline function remove_enchantment(self: item, ench: text) -> item {
+        return variable::remove_enchantment(self, ench);
+    }
+
+    /// RU:
+    /// Проверяет наличие зачарования на предмете.
+    /// EN:
+    /// Checks if the item has the specified enchantment.
+    @alias("имеет_зачарование")
+    inline function has_enchantment(self: item, ench: text, level: number = 0) -> boolean {
+        return variable::item_has_enchantment(self, ench, level);
+    }
+}
+
+@test
+function test_item_properties() {
+    var itm = item("minecraft:diamond_sword", name = "Excalibur", count = 1);
+    var iid = itm.id;
+    var iname = itm.name;
+    var icnt = itm.count;
+    var itags = itm.custom_tags;
+    itm.name = "Blade";
+    itm.count = 2;
+}

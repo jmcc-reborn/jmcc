@@ -1,0 +1,7 @@
+# Clippy configuration
+# https://rust-lang.github.io/rust-clippy/master/index.html
+
+disallowed-macros = []
+disallowed-methods = []
+disallowed-names = []
+disallowed-types = []

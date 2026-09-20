@@ -1,0 +1,97 @@
+//! RU: Модуль всплывающего текста (облачка сообщений) над сущностями.
+//! EN: Text bubble effects module for displaying floating messages above entities.
+
+/// RU: Создает и управляет парящим текстовым облачком над целью.
+/// EN: Creates and manages a floating text bubble above a target.
+@alias("ОблачкоТекста")
+@alias("Облачко")
+export class Bubble {
+    var target: text;
+    var entity_uuid: value;
+    var is_active: boolean;
+
+    /// RU:
+    /// Инициализирует систему облачка текста для указанного игрока.
+    /// EN:
+    /// Initializes the bubble system for a specific target player.
+    function __init__(self: Bubble, target: text) -> Bubble {
+        self.target = target;
+        self.is_active = false;
+        return self;
+    }
+
+    /// RU:
+    /// Асинхронно отображает облачко сообщения, следующее за игроком.
+    /// EN:
+    /// Asynchronously displays the bubble message following the player.
+    @alias("показать")
+    process show(self: Bubble, message: text, duration: number = 100) {
+        if self.is_active == true {
+            self.remove();
+        }
+
+        if message.len() > 64 {
+            message = message[0:64];
+        }
+
+        var formatted_message: text = "&b✉&8 »&7$message";
+        var loc: location = variable::shift_coordinate(value::eye_location<default>(), 0.5, "Y");
+
+        world::spawn_armor_stand(
+            location = loc,
+            custom_name = formatted_message,
+            gravity = "TRUE",
+            small = "TRUE",
+            show_arms = "TRUE",
+            base_plate = "TRUE",
+            marker = "FALSE",
+            invisible = "TRUE",
+        );
+
+        self.entity_uuid = value::uuid<last_entity>();
+        self.is_active = true;
+
+        select::entity_by_name(self.entity_uuid);
+        entity::set_gravity("FALSE");
+        entity::set_invisible("TRUE");
+        entity::set_marker("TRUE");
+        entity::set_invulnerable("TRUE");
+        entity::set_custom_name_visibility();
+
+        for step in 0..duration {
+            code::wait(1);
+            if not self.is_active {
+                break;
+            }
+
+            loc = variable::shift_coordinate(value::eye_location<default>(), 0.5, "Y");
+            select::entity_by_name(self.entity_uuid);
+            if entity::exists() {
+                entity::teleport(loc, keep_rotation = "FALSE");
+            }
+        }
+
+        self.remove();
+    }
+
+    /// RU:
+    /// Принудительно удаляет активное облачко.
+    /// EN:
+    /// Forcefully removes the currently active bubble.
+    @alias("удалить")
+    @alias("скрыть")
+    function remove(self: Bubble) {
+        if self.is_active == true {
+            select::entity_by_name(self.entity_uuid);
+            if entity::exists() {
+                entity::remove();
+            }
+            self.is_active = false;
+        }
+    }
+}
+
+@test
+function test_bubble_init() {
+    var b = Bubble("Player1");
+}

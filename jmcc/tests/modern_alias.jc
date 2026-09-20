@@ -1,0 +1,51 @@
+@alias("привет")
+function hello() -> text {
+    return "hello world";
+}
+
+@alias(en = "add_nums", ru = "сложить")
+function add(a: number, b: number) -> number {
+    return a + b;
+}
+
+@alias("Точка")
+class Point {
+    var x: number;
+    var y: number;
+
+    function __init__(self: Point, x: number, y: number) -> Point {
+        self.x = x;
+        self.y = y;
+        return self;
+    }
+}
+
+@alias("Цвет")
+enum Color {
+    RED,
+    GREEN,
+    BLUE
+}
+
+@алиас("фоновый_процесс")
+process background_worker() {
+    code::wait(10);
+}
+
+event<player_join> {
+    var s1 = hello();
+    var s2 = привет();
+
+    var sum1 = add(10, 20);
+    var sum2 = add_nums(10, 20);
+    var sum3 = сложить(10, 20);
+
+    var p1 = Point(1, 2);
+    var p2 = Точка(3, 4);
+
+    var c1 = Color.RED;
+    var c2 = Цвет.RED;
+
+    background_worker();
+    фоновый_процесс();
+}

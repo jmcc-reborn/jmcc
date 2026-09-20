@@ -1,0 +1,276 @@
+
+enum TestEnum {
+    MALE,
+    FEMALE,
+    HELICOPTER
+}
+
+// Стандартные области видимости и их псевдонимы
+inline var inline_var = 5 + 1 - 1; i`i_var` = TestEnum.HELICOPTER;
+local var local_var = 1; l`l_var` = 2;
+game var game_var = 3; g`g_var` = 4;
+save var save_var = 5; s`s_var` = 6;
+line var line_var = 7; 
+jmcc var jmcc_var = 8;
+
+// Отдельное определение и строгая типизация
+var uninit_var: text;
+var typed_var: number = 10;
+var typed_map: map = {"a": 1};
+
+// Динамические имена переменных
+var `%player%_dynamic` = 100;
+var `странная переменная ⛏️` = 200;
+var `dynamic_${local_var}` = variable::add([1, 2]);
+
+// Тест интерполяции переменных в строку (контекст скоупа)
+game var owner = "Steve";
+var victim_name = "${owner}_sentinel_victim"; // Подставится %var(owner)
+player::message(victim_name); 
+
+if (owner.text_matches("Steve")) {
+    local var owner = 10;
+    player::message("${owner}"); // Подставится %var_local(owner)
+}
+
+// Все типы текстов
+var t_legacy = "&aLegacy Text";
+var t_mini = m"<red>MiniMessage";
+var t_plain = p"Plain text";
+var t_json = j"Json text";
+var t_interp = "Math: ${1 + 2}, Game Var: ${game_var}, Action: ${variable::add([1, 2])}";
+
+// Словари, Списки, NBT
+var map_val = {"a": 1, "b": 2};
+var list_val = [1, 2, 3];
+var nbt_val = m{"minecraft:damage": 10, "custom": "string", "list": [1, 2]};
+
+// Фабрики и игровые значения
+var loc_val = location(1.5, 2.0, 3.5, 0.0, 0.0);
+var item_val = item("stone_sword", nbt=m{"minecraft:damage": 1}, count=1);
+var game_val = value::current_health<current>;
+var sound_val = sound("minecraft:block.anvil.place", 1.0, 1.0, source="MASTER");
+var vec_val = vector(1.0, 2.0, 3.0);
+
+// Математические операторы и функции
+var math1 = 1 + 2 - 3 * 4 / 5 % 6 ^ 2;
+var math2 = abs(-5) + sqrt(16) + cbrt(27) + ceil(1.2) + floor(1.8) + sin(0) + cos(0) + round(1.5, 1);
+
+// Тест min, max, pow (требуют тип variable в качестве первого аргумента)
+local var min_test: number = 5;
+min_test = min_test.min([1, 2, 3]);
+local var max_test: number = 0;
+max_test = max_test.max([1, 2, 3]);
+
+// Тест возведения в степень (используем оператор ^ или инлайн переменные)
+local var pow_base = 2;
+local var pow_res = pow_base ^ 3;
+var math3 = pow_res + min_test + max_test;
+
+// Операторы присваивания
+var assign_test = 10;
+assign_test += 1; assign_test -= 1; assign_test *= 2; assign_test /= 2; assign_test ^= 2; assign_test %= 2;
+
+// Специальные действия (Индексы, срезы)
+var arr: array = [10, 20, 30, 40];
+var idx_get = arr[0];
+var slice_get = arr[0:2];
+arr[0] = 99;
+arr[0:2] = [99, 88];
+
+var str_test: text = "12345";
+var str_idx = str_test[0];
+var str_slice = str_test[0:2];
+str_test[0] = "X";
+str_test[0:2] = "XY";
+
+// Вызовы с аргументами, селекторами и маркерами
+player::message<all_players>("Hello", merging = "SEPARATE_LINES");
+player::message("SEPARATE_LINES", messages = "Overridden");
+
+function math_add(first: number, second: number = 1) -> number {
+  return variable::add([first, second]);
+}
+
+/*@overload
+function math_add(first: text, second: text) -> text {
+  return "$first$second";
+}*/
+
+inline function inline_pow(base: number, exp: number) -> number {
+  return base ^ exp; // Возврат инлайн математики через оператор
+}
+
+function print_args(*args, **kwargs) {
+  player::message(args);
+}
+
+function append_to_list(ref arr_ref: array, value: any) {
+  arr_ref.append_value(value);
+}
+
+
+@hidden
+function menu_func(first: number, second: number) -> number {
+  return first + second;
+}
+
+process async_task() {
+  code::wait(1.0, "SECONDS");
+  player::message<all>("Процесс выполнен");
+}
+
+
+class Vector2D {
+  var x: number;
+  var y: number;
+  
+  function __init__(self: Vector2D, x: number, y: number) -> Vector2D {
+    self.x = x;
+    self.y = y;
+    return self;
+  }
+  
+  function get_length(self: Vector2D) -> number {
+    local var x_sq = self.x ^ 2;
+    local var y_sq = self.y ^ 2;
+    local var sum_xy = variable::add([x_sq, y_sq]);
+    return sum_xy ^ 0.5;
+  }
+}
+
+class Vector2DEx(Vector2D) {
+  var z: number;
+
+  function __add__(first: Vector2DEx, second: Vector2DEx) -> Vector2DEx {
+    return Vector2D(first.x + second.x, first.y + second.y) as Vector2DEx;
+  }
+}
+
+function test_logic() {
+  local var a = 1;
+  local var b = 2;
+  
+  if (a.equals(1)) {
+    player::message("A = 1");
+  } elif (b.equals(2)) {
+    player::message("B = 2");
+  } else if (a.less(0)) {
+    player::message("A < 0");
+  } else {
+    player::message("Nothing");
+  }
+  
+  if not (a.greater(5)) { player::message("A <= 5"); }
+  
+  local var bool_logic = a.exists() and b.exists() or not a.exists();
+  
+  // Тернарные операторы (4 вида)
+  local var ter1 = if a.equals(1) 10 else 20;
+  local var ter2 = 10 if a.equals(1) else 20;
+  if a.equals(1) ter1 = 10 else ter1 = 20;
+  local var ter3 = a.equals(1) ? 10 : 20;
+  
+  // Циклы
+  repeat::forever() {
+    player::message("Forever loop");
+    break;
+  }
+  
+  repeat::while(a.less(10)) {
+    a += 1;
+    code::wait(1.0);
+  }
+  
+  repeat::on_range(0, 5) { index ->
+    player::message(["Index:", index]);
+  }
+  
+  repeat::for_each_in_list(value_variable=val, list=[1,2,3]) {
+    player::message(["Val:", val]);
+  }
+  
+  repeat::for_each_map_entry(key, value, {"a":1, "b":2}) {
+    player::message(["Map Entry:", key, value]);
+  }
+  
+  repeat::multi_times(amount=5.0) {
+    player::message("Multi times");
+  }
+  
+  repeat::on_circle(circlepos, location(0,0,0), 1.0, 20.0, vector(0,1,0), 0.0) {
+    player::display_particle([particle("FLAME", 1, 0, 0, 0, 0, 0)], [circlepos]);
+  }
+}
+
+event<player_join> {
+  // Тест комбинированных аргументов и маркеров
+  player::message<all>("Добро пожаловать!", merging = "SEPARATE_LINES");
+  
+  // Тест сложного NBT
+  local var custom_item = item("minecraft:player_head", nbt=m{
+    "minecraft:profile": {name:"", properties:[{name:"textures", value:"eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYzYzNzA0YTdmYzdkNDM3ZjdiOTIzZTIzZTlhMDhhZTNiYmUyODkzN2RmNGRhZmE5ZTNlODcyNWIyY2U0YWZhNSJ9fX0="}]},
+    "minecraft:custom_name": {extra:[{italic:0b, color:"blue", text:"Test Head"}], text:""}
+  });
+
+  player::give_items([custom_item]);
+  
+  // Тест вызова перегруженных функций
+  local var add_num = math_add(1, 2); // 3
+  // local var add_txt = math_add("1", "2"); // "12"
+  
+  // Тест ООП
+  local var vec1 = Vector2DEx(3, 4);
+  local var vec2 = Vector2DEx(1, 2);
+  local var vec3 = vec1 + vec2;
+  player::message(["Vec length:", vec1.get_length()]);
+  
+  // Тест перегрузки стандартного класса
+  local var rep_text = ("ab" * 3);
+  player::message(rep_text);
+  
+  // Тест *args и **kwargs
+  print_args("Test", "Args", custom_kwarg=1);
+  
+  // Тест сущностей, лучей и частиц
+  select::all_players();
+  select::filter_by_conditional(player::is_near(10.0, value::location<default>, "FALSE"));
+  if (value::selection_size.not_equals([0.0])) {
+      player::display_particle_sphere<all_players>(particle("DUST", 1, 0.0, 0.0, 0, 0, 0, color=16777215, size=1.0), value::location<default>, 5.0, 50.0);
+  }
+  select::reset();
+}
+
+// Событие чата для запуска тестов
+event<player_chat> {
+  if (player::chat_message_equals("@run")) {
+    player::message<all_players>("&9Запуск комплексного теста...");
+    code::start_process(p"async_task", target_mode="NO_TARGET");
+    test_logic();
+  }
+  
+  // Тест динамического вызова функций
+  if (player::chat_message_equals("@call")) {
+    local var func_name = "math_add";
+    local var res = code::call_function(func_name, {"first": 10, "second": 5, "return_variable": 0});
+  }
+}
+
+event<player_click_inventory> {
+  if (value::open_inventory_title<default>.equals(["TestGUI"])) {
+    world::cancel_event();
+    
+    local var clicked_item = value::event_item;
+    
+    // Тест методов предметов
+    if (clicked_item.is_type("ITEM")) {
+      local var item_name = clicked_item.get_item_name();
+      local var item_lore = clicked_item.get_item_lore_line(0.0);
+      
+      clicked_item = clicked_item.set_item_custom_tag("test_tag", "test_value");
+      clicked_item = clicked_item.set_item_lore_line("&aNew Lore", 1.0);
+      
+      player::set_inventory_menu_item(clicked_item, value::event_slot);
+    }
+  }
+}

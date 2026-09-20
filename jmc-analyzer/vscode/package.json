@@ -1,0 +1,89 @@
+{
+  "name": "jmc-analyzer",
+  "displayName": "JMC Analyzer",
+  "description": "Full Language Server (diagnostics, IntelliSense, definitions, hover, rename, semantic tokens) and syntax highlighting for JustCode (.jc)",
+  "version": "0.1.0",
+  "publisher": "jmcc",
+  "icon": "media/logo.png",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jmcc-reborn/jmcc"
+  },
+  "homepage": "https://github.com/jmcc-reborn/jmcc",
+  "bugs": {
+    "url": "https://github.com/jmcc-reborn/jmcc/issues"
+  },
+  "keywords": [
+    "justcode",
+    "justmc",
+    "jc",
+    "minecraft",
+    "diamondfire",
+    "lsp"
+  ],
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:jc"],
+  "main": "./src/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "jc",
+        "aliases": ["JustCode", "JC", "JMCC"],
+        "extensions": [".jc"],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./media/icon.png",
+          "dark": "./media/icon-dark.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "jc",
+        "scopeName": "source.jc",
+        "path": "./syntaxes/justcode.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "jmc.analyzer.restartServer",
+        "title": "JMC Analyzer: Restart Language Server",
+        "category": "JustCode"
+      },
+      {
+        "command": "jmc.analyzer.downloadServer",
+        "title": "JMC Analyzer: Download / Update Language Server",
+        "category": "JustCode"
+      }
+    ],
+    "configuration": {
+      "title": "JMC Analyzer",
+      "properties": {
+        "jmc.analyzer.enableLsp": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the jmc-analyzer language server for diagnostics, autocomplete, go to definition, hover, rename, and semantic tokens."
+        },
+        "jmc.analyzer.autoDownload": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically download the jmc-analyzer language server from GitHub Releases if not found locally."
+        },
+        "jmc.analyzer.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the jmc-analyzer binary. Empty means look up `jmc-analyzer` on PATH."
+        },
+        "jmc.analyzer.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Trace communication with the jmc-analyzer language server."
+        }
+      }
+    }
+  }
+}

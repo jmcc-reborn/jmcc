@@ -1,0 +1,40 @@
+// Циклы while, for и метки с break 'label (edition 2026).
+// while понижается в repeat_while.
+// for понижается в repeat_for_each_in_list или repeat_for_each_map_entry в зависимости от типа.
+// break 'label осуществляет многоуровневый выход из вложенных циклов с помощью синтетического флага.
+
+event<player_join> {
+    // Простой цикл while с условием
+    var i = 0;
+    while i < 5 {
+        i += 1;
+        player::message(i);
+    }
+
+    // Итерация по списку: элемент
+    var items = ["яблоко", "банан", "груша"];
+    for item in items {
+        player::message(item);
+    }
+
+    // Итерация по списку: индекс и элемент
+    for idx, val in items {
+        player::message(val);
+    }
+
+    // Итерация по словарю: ключ и значение
+    var scores = {"Alice": 100, "Bob": 85};
+    for name, score in scores {
+        player::message(name);
+    }
+
+    // Вложенные циклы с меткой и break 'label
+    'outer: while true {
+        'inner: for item in items {
+            if item == "банан" {
+                player::message("Найден банан, выход из внешнего цикла");
+                break 'outer;
+            }
+        }
+    }
+}

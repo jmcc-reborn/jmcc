@@ -1,0 +1,5 @@
+/// RU: Базовый класс для всех типов в JustMC.
+/// EN: Base class for all types in JustMC.
+@alias("любой")
+@lang_item
+export class any {}

@@ -1,0 +1,25 @@
+// match, try/catch и throw (edition 2026).
+// match понижается в цепочку if/else; throw — code::call_exception;
+// try/catch — controller::catch_exception вокруг тела try.
+
+function describe(n: number) -> text {
+    match n {
+        0 => "zero",
+        1 | 2 => "small",
+        _ if n > 10 => "big",
+        _ => "other",
+    }
+}
+
+event<player_join> {
+    player::message(describe(0));
+    player::message(describe(2));
+    player::message(describe(20));
+
+    try {
+        throw ERROR "oops";
+        player::message("unreachable");
+    } catch (err) {
+        player::message("caught");
+    }
+}

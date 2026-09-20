@@ -1,0 +1,36 @@
+{
+  "player": [
+    "current",
+    "default_player",
+    "killer_player",
+    "damager_player",
+    "shooter_player",
+    "victim_player",
+    "random_player",
+    "all_players"
+  ],
+  "entity": [
+    "current",
+    "default_entity",
+    "killer_entity",
+    "damager_entity",
+    "shooter_entity",
+    "projectile",
+    "victim_entity",
+    "random_entity",
+    "all_mobs",
+    "all_entities",
+    "last_entity"
+  ],
+  "game_value": [
+    "current",
+    "default",
+    "default_entity",
+    "killer_entity",
+    "damager_entity",
+    "victim_entity",
+    "shooter_entity",
+    "projectile",
+    "last_entity"
+  ]
+}

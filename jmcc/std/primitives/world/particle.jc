@@ -1,0 +1,271 @@
+/// RU: Эффект частиц в игровом мире JustMC.
+/// EN: Particle effect in the JustMC game world.
+@alias("частица")
+@lang_item
+export class particle {
+    var id: text;
+    var count: number;
+    var spread_x: number;
+    var spread_y: number;
+    var motion_x: number;
+    var motion_y: number;
+    var motion_z: number;
+    var material: text;
+    var color: number;
+    var size: number;
+    var to_color: number;
+
+    inline function __init__(
+        particle: text,
+        count: number = 0,
+        spread_x: number = 0,
+        spread_y: number = 0,
+        motion_x: number = 0,
+        motion_y: number = 0,
+        motion_z: number = 0,
+        material: text = "",
+        color: number = 0,
+        size: number = 0,
+        to_color: number = 0,
+    ) -> particle {
+        /* compiler built-in */
+    }
+
+    inline function __equals__(first: particle, second: particle) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: particle, second: particle) -> boolean {
+        return first.not_equals(second);
+    }
+
+    /// RU: Тип частицы.
+    /// EN: Particle type.
+    @alias("ид")
+    @alias("айди")
+    @getter
+    inline function id(self: particle) -> text {
+        return self.get_particle_type();
+    }
+
+    /// RU: Количество частиц.
+    /// EN: Amount of particles.
+    @alias("количество")
+    @getter
+    inline function count(self: particle) -> number {
+        return self.get_particle_amount();
+    }
+
+    /// RU: Разброс частиц (горизонтальный и вертикальный).
+    /// EN: Particle spread (horizontal and vertical).
+    @alias("разброс")
+    @getter
+    inline function spread(self: particle) -> list<number> {
+        return [self.get_particle_spread("HORIZONTAL"), self.get_particle_spread("VERTICAL")];
+    }
+
+    /// RU: Горизонтальный разброс.
+    /// EN: Horizontal particle spread.
+    @alias("разброс_х")
+    @getter
+    inline function spread_x(self: particle) -> number {
+        return self.get_particle_spread("HORIZONTAL");
+    }
+
+    /// RU: Вертикальный разброс.
+    /// EN: Vertical particle spread.
+    @alias("разброс_у")
+    @getter
+    inline function spread_y(self: particle) -> number {
+        return self.get_particle_spread("VERTICAL");
+    }
+
+    /// RU: Скорость по оси X.
+    /// EN: Motion along the X axis.
+    @alias("движение_х")
+    @getter
+    inline function motion_x(self: particle) -> number {
+        return self.get_particle_offset().x;
+    }
+
+    /// RU: Скорость по оси Y.
+    /// EN: Motion along the Y axis.
+    @alias("движение_у")
+    @getter
+    inline function motion_y(self: particle) -> number {
+        return self.get_particle_offset().y;
+    }
+
+    /// RU: Скорость по оси Z.
+    /// EN: Motion along the Z axis.
+    @alias("движение_з")
+    @getter
+    inline function motion_z(self: particle) -> number {
+        return self.get_particle_offset().z;
+    }
+
+    /// RU: Размер частицы.
+    /// EN: Size of the particle.
+    @alias("размер")
+    @getter
+    inline function size(self: particle) -> number {
+        return self.get_particle_size();
+    }
+
+    /// RU: Материал частицы.
+    /// EN: Particle material.
+    @alias("материал")
+    @getter
+    inline function material(self: particle) -> text {
+        return self.get_particle_material();
+    }
+
+    /// RU: Цвет частицы.
+    /// EN: Color of the particle.
+    @alias("цвет")
+    @getter
+    inline function color(self: particle) -> text {
+        return self.get_particle_color();
+    }
+
+    /// RU: Конечный цвет частицы.
+    /// EN: Transition target color.
+    @alias("к_цвету")
+    @getter
+    inline function to_color(self: particle) -> number {
+        return 0;
+    }
+
+    /// RU: Вектор смещения частиц.
+    /// EN: Particle offset vector.
+    @alias("смещение")
+    @getter
+    inline function offset(self: particle) -> vector {
+        return self.get_particle_offset();
+    }
+
+    /// RU: Установка типа частицы.
+    /// EN: Sets particle type.
+    @alias("ид")
+    @alias("айди")
+    @setter
+    inline function id(self: particle, type: text) -> particle {
+        return self.set_particle_type(type);
+    }
+
+    /// RU: Установка количества частиц.
+    /// EN: Sets particle amount.
+    @alias("количество")
+    @setter
+    inline function count(self: particle, count: number) -> particle {
+        return self.set_particle_amount(count);
+    }
+
+    /// RU: Установка разброса частиц.
+    /// EN: Sets particle spread.
+    @alias("разброс")
+    @setter
+    inline function spread(self: particle, spread: array) -> particle {
+        var horizontal = variable::get_list_value(spread, 0);
+        var vertical = variable::get_list_value(spread, 1);
+        return self.set_particle_spread(horizontal, vertical);
+    }
+
+    /// RU: Установка горизонтального разброса.
+    /// EN: Sets horizontal particle spread.
+    @alias("разброс_х")
+    @setter
+    inline function spread_x(self: particle, val: number) -> particle {
+        return self.set_particle_spread(val, self.get_particle_spread("VERTICAL"));
+    }
+
+    /// RU: Установка вертикального разброса.
+    /// EN: Sets vertical particle spread.
+    @alias("разброс_у")
+    @setter
+    inline function spread_y(self: particle, val: number) -> particle {
+        return self.set_particle_spread(self.get_particle_spread("HORIZONTAL"), val);
+    }
+
+    /// RU: Установка скорости по оси X.
+    /// EN: Sets motion along X axis.
+    @alias("движение_х")
+    @setter
+    inline function motion_x(self: particle, val: number) -> particle {
+        var off = self.get_particle_offset();
+        off.x = val;
+        return self.set_particle_offset(off);
+    }
+
+    /// RU: Установка скорости по оси Y.
+    /// EN: Sets motion along Y axis.
+    @alias("движение_у")
+    @setter
+    inline function motion_y(self: particle, val: number) -> particle {
+        var off = self.get_particle_offset();
+        off.y = val;
+        return self.set_particle_offset(off);
+    }
+
+    /// RU: Установка скорости по оси Z.
+    /// EN: Sets motion along Z axis.
+    @alias("движение_з")
+    @setter
+    inline function motion_z(self: particle, val: number) -> particle {
+        var off = self.get_particle_offset();
+        off.z = val;
+        return self.set_particle_offset(off);
+    }
+
+    /// RU: Установка размера частицы.
+    /// EN: Sets particle size.
+    @alias("размер")
+    @setter
+    inline function size(self: particle, size: number) -> particle {
+        return self.set_particle_size(size);
+    }
+
+    /// RU: Установка материала частицы.
+    /// EN: Sets particle material.
+    @alias("материал")
+    @setter
+    inline function material(self: particle, material: item) -> particle {
+        return self.set_particle_material(material);
+    }
+
+    /// RU: Установка цвета частицы.
+    /// EN: Sets particle color.
+    @alias("цвет")
+    @setter
+    inline function color(self: particle, color: text) -> particle {
+        return self.set_particle_color(color);
+    }
+
+    /// RU: Установка конечного цвета частицы.
+    /// EN: Sets transition target color.
+    @alias("к_цвету")
+    @setter
+    inline function to_color(self: particle, val: number) -> particle {
+        return self;
+    }
+
+    /// RU: Установка вектора смещения частиц.
+    /// EN: Sets particle offset vector.
+    @alias("смещение")
+    @setter
+    inline function offset(self: particle, offset: vector) -> particle {
+        return self.set_particle_offset(offset);
+    }
+}
+
+@test
+function test_particle_properties() {
+    var prt = particle("minecraft:flame", 10, 1, 1, 0, 1, 0);
+    var prid = prt.id;
+    var prcnt = prt.count;
+    prt.id = "minecraft:smoke";
+    prt.count = 5;
+    prt.spread_x = 2;
+    prt.spread_y = 2;
+    prt.motion_x = 1;
+}

@@ -1,0 +1,91 @@
+/// RU: Псевдоним ассоциативного массива (словаря).
+/// EN: Alias for dictionary / map.
+@alias("словарь")
+export typealias dict = map;
+
+/// RU: Псевдоним обобщенного ассоциативного массива map<K, V>.
+/// EN: Alias for generic map<K, V>.
+@alias("словарь")
+export typealias dict<K, V> = map<K, V>;
+
+/// RU: Ассоциативный массив (словарь) ключ-значение.
+/// EN: Associative array (key-value map).
+@alias("карта")
+@alias("словарь")
+@lang_item
+export class map<K, V> implements Iterable<K> {
+    /// RU:
+    /// Возвращает итератор по ключам карты.
+    /// EN:
+    /// Returns an iterator over the keys of the map.
+    @alias("итератор")
+    @alias("into_iter")
+    function iter(self: map<K, V>) -> MapKeyIterator<K, V> {
+        return MapKeyIterator(self);
+    }
+
+    inline function __equals__(first: map<K, V>, second: map<K, V>) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: map<K, V>, second: map<K, V>) -> boolean {
+        return first.not_equals(second);
+    }
+
+    inline function __contains__(first: map<K, V>, second: K) -> boolean {
+        return first.map_has_key(second);
+    }
+
+    inline function __add__(first: map<K, V>, second: map<K, V>) -> map<K, V> {
+        return variable::append_map(first, second);
+    }
+
+    @getter
+    inline function __subscript__(self: map<K, V>, index: K) -> V {
+        return self.get_map_value(index);
+    }
+
+    @setter
+    inline function __subscript__(self: map<K, V>, index: K, value: V) -> map<K, V> {
+        self.set_map_value(index, value);
+        return self;
+    }
+
+    /// RU:
+    /// Возвращает массив всех ключей карты.
+    /// EN:
+    /// Returns an array of all keys in the map.
+    @alias("ключи")
+    inline function keys(self: map<K, V>) -> array<K> {
+        return variable::get_map_keys(self);
+    }
+
+    /// RU:
+    /// Возвращает массив всех значений карты.
+    /// EN:
+    /// Returns an array of all values in the map.
+    @alias("значения")
+    inline function values(self: map<K, V>) -> array<V> {
+        return variable::get_map_values(self);
+    }
+
+    /// RU:
+    /// Проверяет наличие ключа в карте.
+    /// EN:
+    /// Checks if the map contains the specified key.
+    @alias("содержит_ключ")
+    @alias("есть_ключ")
+    inline function has_key(self: map<K, V>, key: K) -> boolean {
+        return self.map_has_key(key);
+    }
+
+    /// RU:
+    /// Возвращает количество записей в карте.
+    /// EN:
+    /// Returns the number of entries in the map.
+    @alias("длина")
+    @alias("размер")
+    inline function len(self: map<K, V>) -> number {
+        return variable::get_map_size(self);
+    }
+}

@@ -1,0 +1,121 @@
+/// RU: Звуковой эффект в JustMC.
+/// EN: Sound effect in JustMC.
+@alias("звук")
+@lang_item
+export class sound {
+    inline function __init__(
+        sound: text,
+        volume: number = 1,
+        pitch: number = 1,
+        variation: text = "",
+        source: text = "",
+    ) {
+        /* compiler built-in */
+    }
+
+    inline function __equals__(first: sound, second: sound) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: sound, second: sound) -> boolean {
+        return first.not_equals(second);
+    }
+
+    /// RU: Идентификатор звука.
+    /// EN: Sound identifier.
+    @alias("ид")
+    @alias("айди")
+    @getter
+    inline function id(self: sound) -> text {
+        return self.get_sound_type();
+    }
+
+    /// RU: Громкость звука.
+    /// EN: Sound volume.
+    @alias("громкость")
+    @getter
+    inline function volume(self: sound) -> number {
+        return self.get_sound_volume_action();
+    }
+
+    /// RU: Высота (тон) звука.
+    /// EN: Pitch of the sound.
+    @alias("высота")
+    @alias("тон")
+    @getter
+    inline function pitch(self: sound) -> number {
+        return self.get_sound_pitch();
+    }
+
+    /// RU: Вариация звука.
+    /// EN: Sound variation.
+    @alias("вариация")
+    @getter
+    inline function variation(self: sound) -> text {
+        return self.get_sound_variation();
+    }
+
+    /// RU: Источник звука.
+    /// EN: Sound source.
+    @alias("источник")
+    @getter
+    inline function source(self: sound) -> text {
+        return self.get_sound_source();
+    }
+
+    /// RU: Установка типа звука.
+    /// EN: Sets sound type.
+    @alias("ид")
+    @alias("айди")
+    @setter
+    inline function id(self: sound, type: text) -> sound {
+        return self.set_sound_type("", type);
+    }
+
+    /// RU: Установка громкости звука.
+    /// EN: Sets sound volume.
+    @alias("громкость")
+    @setter
+    inline function volume(self: sound, volume: number) -> sound {
+        return self.set_sound_volume_action(volume);
+    }
+
+    /// RU: Установка высоты (тона) звука.
+    /// EN: Sets sound pitch.
+    @alias("высота")
+    @alias("тон")
+    @setter
+    inline function pitch(self: sound, pitch: number) -> sound {
+        return self.set_sound_pitch(pitch);
+    }
+
+    /// RU: Установка вариации звука.
+    /// EN: Sets sound variation.
+    @alias("вариация")
+    @setter
+    inline function variation(self: sound, variation: text) -> sound {
+        return self.set_sound_variation(variation);
+    }
+
+    /// RU: Установка источника звука.
+    /// EN: Sets sound source.
+    @alias("источник")
+    @setter
+    inline function source(self: sound, source: text) -> sound {
+        return self.set_sound_source(source);
+    }
+}
+
+@test
+function test_sound_properties() {
+    var snd = sound("minecraft:entity.player.levelup", 1, 1, source = "MASTER");
+    var sid = snd.id;
+    var svol = snd.volume;
+    var spitch = snd.pitch;
+    var svar = snd.variation;
+    var ssrc = snd.source;
+    snd.id = "minecraft:entity.generic.explode";
+    snd.volume = 2;
+    snd.pitch = 0.5;
+    snd.source = "PLAYER";
+}

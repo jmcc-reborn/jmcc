@@ -1,0 +1,172 @@
+/// RU: Точка в пространстве с координатами и углами поворота.
+/// EN: Point in space with coordinates and rotation angles.
+@alias("локация")
+@alias("координаты")
+@lang_item
+export class location {
+    var x: number;
+    var y: number;
+    var z: number;
+    var yaw: number;
+    var pitch: number;
+
+    inline function __init__(
+        x: number,
+        y: number,
+        z: number,
+        yaw: number = 0,
+        pitch: number = 0,
+    ) -> location {
+        return variable::set_all_coordinates(x, y, z, yaw, pitch);
+    }
+
+    inline function __equals__(first: location, second: location) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: location, second: location) -> boolean {
+        return first.not_equals(second);
+    }
+
+    inline function __add__(first: location, second: location) -> location {
+        var x, y, z, yaw, pitch = second.get_all_coordinates();
+        return variable::shift_all_coordinates(first, x, y, z, yaw, pitch);
+    }
+
+    inline function __subtract__(first: location, second: location) -> location {
+        var x, y, z, yaw, pitch = second.get_all_coordinates();
+        variable::subtract(x, [0, x]);
+        variable::subtract(y, [0, y]);
+        variable::subtract(z, [0, z]);
+        variable::subtract(yaw, [0, yaw]);
+        variable::subtract(pitch, [0, pitch]);
+        return variable::shift_all_coordinates(first, x, y, z, yaw, pitch);
+    }
+
+    inline function __multiply__(first: location, second: location) -> location {
+        var x, y, z, yaw, pitch = first.get_all_coordinates();
+        var x2, y2, z2, yaw2, pitch2 = second.get_all_coordinates();
+        return variable::set_all_coordinates(
+            variable::multiply([x, x2]),
+            variable::multiply([y, y2]),
+            variable::multiply([z, z2]),
+            variable::multiply([yaw, yaw2]),
+            variable::multiply([pitch, pitch2]),
+        );
+    }
+
+    inline function __divide__(first: location, second: location) -> location {
+        var x, y, z, yaw, pitch = first.get_all_coordinates();
+        var x2, y2, z2, yaw2, pitch2 = second.get_all_coordinates();
+        return variable::set_all_coordinates(
+            variable::divide([x, x2]),
+            variable::divide([y, y2]),
+            variable::divide([z, z2]),
+            variable::divide([yaw, yaw2]),
+            variable::divide([pitch, pitch2]),
+        );
+    }
+
+    /// RU: Координата X.
+    /// EN: Coordinate X.
+    @alias("х")
+    @getter
+    inline function x(self: location) -> number {
+        return self.get_coordinate("X");
+    }
+
+    /// RU: Координата Y.
+    /// EN: Coordinate Y.
+    @alias("у")
+    @getter
+    inline function y(self: location) -> number {
+        return self.get_coordinate("Y");
+    }
+
+    /// RU: Координата Z.
+    /// EN: Coordinate Z.
+    @alias("з")
+    @getter
+    inline function z(self: location) -> number {
+        return self.get_coordinate("Z");
+    }
+
+    /// RU: Угол поворота по горизонтали (yaw).
+    /// EN: Horizontal rotation angle (yaw).
+    @alias("рыскание")
+    @getter
+    inline function yaw(self: location) -> number {
+        return self.get_coordinate("YAW");
+    }
+
+    /// RU: Угол поворота по вертикали (pitch).
+    /// EN: Vertical rotation angle (pitch).
+    @alias("тангаж")
+    @getter
+    inline function pitch(self: location) -> number {
+        return self.get_coordinate("PITCH");
+    }
+
+    /// RU: Установка координаты X.
+    /// EN: Sets coordinate X.
+    @alias("х")
+    @setter
+    inline function x(self: location, val: number) -> location {
+        return self.set_coordinate(val, "X");
+    }
+
+    /// RU: Установка координаты Y.
+    /// EN: Sets coordinate Y.
+    @alias("у")
+    @setter
+    inline function y(self: location, val: number) -> location {
+        return self.set_coordinate(val, "Y");
+    }
+
+    /// RU: Установка координаты Z.
+    /// EN: Sets coordinate Z.
+    @alias("з")
+    @setter
+    inline function z(self: location, val: number) -> location {
+        return self.set_coordinate(val, "Z");
+    }
+
+    /// RU: Установка угла поворота по горизонтали.
+    /// EN: Sets horizontal rotation angle.
+    @alias("рыскание")
+    @setter
+    inline function yaw(self: location, val: number) -> location {
+        return self.set_coordinate(val, "YAW");
+    }
+
+    /// RU: Установка угла поворота по вертикали.
+    /// EN: Sets vertical rotation angle.
+    @alias("тангаж")
+    @setter
+    inline function pitch(self: location, val: number) -> location {
+        return self.set_coordinate(val, "PITCH");
+    }
+
+    inline function __set_attribute__(self, key, value) {
+        self = self.set_coordinate(value, key);
+    }
+
+    inline function __get_attribute__(self, key) {
+        return self.get_coordinate(key);
+    }
+}
+
+@test
+function test_location_properties() {
+    var loc = location(10, 20, 30, 45, 90);
+    var lx = loc.x;
+    var ly = loc.y;
+    var lz = loc.z;
+    var lyaw = loc.yaw;
+    var lpitch = loc.pitch;
+    loc.x = 15;
+    loc.y = 25;
+    loc.z = 35;
+    loc.yaw = 50;
+    loc.pitch = 80;
+}

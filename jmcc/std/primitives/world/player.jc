@@ -1,0 +1,5 @@
+/// RU: Игрок в мире JustMC.
+/// EN: Player in the JustMC world.
+@alias("игрок")
+@lang_item
+export class player {}

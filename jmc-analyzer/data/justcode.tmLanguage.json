@@ -1,0 +1,685 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "JustCode",
+  "scopeName": "source.jc",
+  "fileTypes": ["jc"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#attributes" },
+    { "include": "#event-decl" },
+    { "include": "#class-decl" },
+    { "include": "#interface-decl" },
+    { "include": "#enum-decl" },
+    { "include": "#function-decl" },
+    { "include": "#process-decl" },
+    { "include": "#typealias-decl" },
+    { "include": "#import-decl" },
+    { "include": "#loop-label" },
+    { "include": "#match-expr" },
+    { "include": "#try-catch" },
+    { "include": "#keywords" },
+    { "include": "#control" },
+    { "include": "#lambda" },
+    { "include": "#action-call" },
+    { "include": "#value-access" },
+    { "include": "#quoted-ident" },
+    { "include": "#var-decl" },
+    { "include": "#strings" },
+    { "include": "#nbt" },
+    { "include": "#numbers" },
+    { "include": "#booleans" },
+    { "include": "#operators" },
+    { "include": "#punctuation" },
+    { "include": "#types" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.jc",
+          "begin": "/\\*\\*(?!/)",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.begin.jc" }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.comment.end.jc" }
+          }
+        },
+        {
+          "name": "comment.block.jc",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.begin.jc" }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.comment.end.jc" }
+          }
+        },
+        {
+          "name": "comment.line.double-slash.jc",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        {
+          "name": "meta.attribute.jc",
+          "begin": "(@)(getter|setter|lang_item|dict|overload|hidden|item|description|args|return_var|alias|геттер|сеттер|языковой_элемент|словарь|алиас)(\\()",
+          "beginCaptures": {
+            "1": { "name": "constant.character.escape.jc" },
+            "2": { "name": "constant.character.escape.jc" },
+            "3": { "name": "punctuation.definition.arguments.begin.jc" }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.arguments.end.jc" }
+          },
+          "patterns": [
+            { "include": "$self" }
+          ]
+        },
+        {
+          "match": "(@)(getter|setter|lang_item|dict|overload|hidden|item|description|args|return_var|alias|геттер|сеттер|языковой_элемент|словарь|алиас)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "captures": {
+            "1": { "name": "constant.character.escape.jc" },
+            "2": { "name": "constant.character.escape.jc" }
+          }
+        },
+        {
+          "name": "meta.attribute.jc",
+          "begin": "(@)([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)(\\()",
+          "beginCaptures": {
+            "1": { "name": "constant.character.escape.jc" },
+            "2": { "name": "constant.character.escape.jc" },
+            "3": { "name": "punctuation.definition.arguments.begin.jc" }
+          },
+          "end": "\\)",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.arguments.end.jc" }
+          },
+          "patterns": [
+            { "include": "$self" }
+          ]
+        },
+        {
+          "match": "(@)([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+          "captures": {
+            "1": { "name": "constant.character.escape.jc" },
+            "2": { "name": "constant.character.escape.jc" }
+          }
+        }
+      ]
+    },
+    "event-decl": {
+      "name": "meta.event.jc",
+      "begin": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(event|событие)\\s*(<)",
+      "beginCaptures": {
+        "1": { "name": "keyword.declaration.event.jc" },
+        "2": { "name": "punctuation.definition.generic.begin.jc" }
+      },
+      "end": "(>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.generic.end.jc" }
+      },
+      "patterns": [
+        { "include": "#interpolation" },
+        {
+          "match": "[A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*",
+          "name": "entity.name.event.jc"
+        }
+      ]
+    },
+    "class-decl": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(?:(export|экспорт)\\s+)?(?:(inline|встраиваемый)\\s+)?(class|класс)\\s+([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+      "captures": {
+        "1": { "name": "keyword.control.export.jc" },
+        "2": { "name": "storage.modifier.inline.jc" },
+        "3": { "name": "keyword.declaration.class.jc" },
+        "4": { "name": "entity.name.type.class.jc" }
+      }
+    },
+    "interface-decl": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(?:(export|экспорт)\\s+)?(interface|интерфейс)\\s+([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+      "captures": {
+        "1": { "name": "keyword.control.export.jc" },
+        "2": { "name": "keyword.declaration.interface.jc" },
+        "3": { "name": "entity.name.type.interface.jc" }
+      }
+    },
+    "enum-decl": {
+      "begin": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(?:(export|экспорт)\\s+)?(enum|перечисление)\\s+([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.export.jc" },
+        "2": { "name": "keyword.declaration.enum.jc" },
+        "3": { "name": "entity.name.type.enum.jc" }
+      },
+      "end": "(?<=\\})",
+      "patterns": [
+        { "include": "#comments" },
+        {
+          "begin": "\\{",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.enum.begin.jc" }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.enum.end.jc" }
+          },
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#strings" },
+            { "include": "#numbers" },
+            {
+              "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]*)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+              "name": "variable.other.enummember.jc"
+            },
+            {
+              "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)\\s*(=)",
+              "captures": {
+                "1": { "name": "variable.other.enummember.jc" },
+                "2": { "name": "keyword.operator.assignment.jc" }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "function-decl": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(?:(export|экспорт)\\s+)?(?:(inline|встраиваемый)\\s+)?(function|fun|def|функция|действие|определение)\\s+(__[A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*__|[A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+      "captures": {
+        "1": { "name": "keyword.control.export.jc" },
+        "2": { "name": "storage.modifier.inline.jc" },
+        "3": { "name": "keyword.declaration.function.jc" },
+        "4": { "name": "entity.name.function.jc" }
+      }
+    },
+    "process-decl": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(?:(export|экспорт)\\s+)?(process|процесс)\\s+([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+      "captures": {
+        "1": { "name": "keyword.control.export.jc" },
+        "2": { "name": "keyword.declaration.process.jc" },
+        "3": { "name": "entity.name.function.process.jc" }
+      }
+    },
+    "typealias-decl": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(?:(export|экспорт)\\s+)?(typealias|тип|псевдоним)\\s+([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+      "captures": {
+        "1": { "name": "keyword.control.export.jc" },
+        "2": { "name": "keyword.declaration.typealias.jc" },
+        "3": { "name": "entity.name.type.alias.jc" }
+      }
+    },
+    "import-decl": {
+      "begin": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(import|импорт)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.import.jc" }
+      },
+      "end": "(?=;|$)",
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(from|as|из|как)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.import.jc"
+        }
+      ]
+    },
+    "loop-label": {
+      "patterns": [
+        {
+          "match": "'([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)\\s*:",
+          "captures": {
+            "0": { "name": "entity.name.label.jc" },
+            "1": { "name": "entity.name.label.jc" }
+          }
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(break|прервать)(?![A-Za-z0-9_а-яА-ЯёЁ])\\s+'([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+          "captures": {
+            "1": { "name": "keyword.control.flow.jc" },
+            "2": { "name": "entity.name.label.jc" }
+          }
+        }
+      ]
+    },
+    "match-expr": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(match|выбор|сопоставить)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.switch.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(case|default|вариант|случай|по_умолчанию)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.switch.jc"
+        },
+        {
+          "match": "(=>)",
+          "name": "keyword.operator.arrow.jc"
+        }
+      ]
+    },
+    "try-catch": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(try|catch|throw|попытка|исключение|перехват|поймать|выбросить|бросить)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+      "name": "keyword.control.trycatch.jc"
+    },
+    "keywords": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(function|fun|def|process|event|class|interface|enum|typealias|import|export|var|local|game|save|line|jmcc|функция|действие|определение|процесс|событие|класс|интерфейс|перечисление|тип|псевдоним|импорт|экспорт|переменная|перем|пусть|локальный|игра|сохранить|сохранение|строка)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+      "name": "keyword.declaration.jc"
+    },
+    "control": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(if|elif|else|если|иначе|иначе_если|иначеесли)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.conditional.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(while|for|пока|для)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.loop.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(break|return|прервать|вернуть|возврат)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.flow.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(inline|встраиваемый)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "storage.modifier.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(export|from|экспорт|из)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.export.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(implements|extends|реализует|расширяет)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "storage.modifier.inheritance.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(as|как)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.as.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(in|в)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.in.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(not|and|or|не|и|или)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "keyword.control.logical.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(ref|ссылка)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "storage.modifier.ref.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(const|константа)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "storage.modifier.const.jc"
+        }
+      ]
+    },
+    "lambda": {
+      "patterns": [
+        {
+          "begin": "(?x)\n            (\\()\n            (?=\n              [^;()]*\\)\n              (?:\\s*->\\s*[A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ<>]*)?\n              \\s*=>\n            )\n          ",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.parameters.begin.jc" }
+          },
+          "end": "(\\))(?:\\s*(->)\\s*([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ<>]*))?\\s*(=>)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.parameters.end.jc" },
+            "2": { "name": "keyword.operator.arrow.jc" },
+            "3": { "name": "support.type.jc" },
+            "4": { "name": "keyword.operator.arrow.jc" }
+          },
+          "name": "meta.lambda.parameters.jc",
+          "patterns": [
+            { "include": "#comments" },
+            {
+              "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(ref|ссылка)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+              "name": "storage.modifier.ref.jc"
+            },
+            {
+              "match": "\\*\\*|\\*",
+              "name": "keyword.operator.spread.jc"
+            },
+            {
+              "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)\\s*(:)",
+              "captures": {
+                "1": { "name": "variable.parameter.jc" },
+                "2": { "name": "punctuation.separator.annotation.jc" }
+              }
+            },
+            { "include": "#types" },
+            {
+              "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+              "name": "variable.parameter.jc"
+            }
+          ]
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)\\s*(=>)",
+          "captures": {
+            "1": { "name": "variable.parameter.jc" },
+            "2": { "name": "keyword.operator.arrow.jc" }
+          }
+        }
+      ]
+    },
+    "action-call": {
+      "begin": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(player|entity|world|variable|code|controller|select|repeat|value|игрок|сущность|мир|переменная|код|контроллер|выбор|повтор|значение)::([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+      "beginCaptures": {
+        "1": { "name": "support.class.builtin.jc" },
+        "2": { "name": "entity.name.function.jc" }
+      },
+      "end": "(?![<(])|(?=\\s*[=;,)\\]])",
+      "name": "meta.action.call.jc",
+      "patterns": [
+        { "include": "#selector" },
+        { "include": "#call-args" }
+      ]
+    },
+    "value-access": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(value|значение)::([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)",
+      "captures": {
+        "1": { "name": "support.class.builtin.jc" },
+        "2": { "name": "variable.other.constant.jc" }
+      }
+    },
+    "selector": {
+      "begin": "(<)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.generic.begin.jc" }
+      },
+      "end": "(>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.generic.end.jc" }
+      },
+      "contentName": "variable.other.constant.jc",
+      "patterns": [
+        { "include": "#interpolation" },
+        { "include": "#quoted-ident" },
+        {
+          "match": "\\$[A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*",
+          "name": "variable.other.interpolated.jc"
+        }
+      ]
+    },
+    "call-args": {
+      "begin": "(\\()",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.arguments.begin.jc" }
+      },
+      "end": "(\\))",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.arguments.end.jc" }
+      },
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)\\s*(=)",
+          "captures": {
+            "1": { "name": "variable.parameter.jc" },
+            "2": { "name": "keyword.operator.assignment.jc" }
+          }
+        },
+        { "include": "$self" }
+      ]
+    },
+    "quoted-ident": {
+      "name": "variable.other.quoted.jc",
+      "begin": "(?:(?<![A-Za-z0-9_а-яА-ЯёЁ])(save|game|inline|local|line|jmcc|сохранить|сохранение|игра|встраиваемый|локальный|строка)(?![A-Za-z0-9_а-яА-ЯёЁ])\\s+)?(?:(?<![A-Za-z0-9_а-яА-ЯёЁ])(var|переменная|перем|пусть)(?![A-Za-z0-9_а-яА-ЯёЁ])\\s+)?(?:([siglсигл])\\s*)?(`)",
+      "beginCaptures": {
+        "1": { "name": "storage.modifier.scope.jc" },
+        "2": { "name": "storage.type.jc" },
+        "3": { "name": "storage.modifier.scope.prefix.jc" },
+        "4": { "name": "punctuation.definition.variable.begin.jc" }
+      },
+      "end": "(`)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.variable.end.jc" }
+      },
+      "patterns": [
+        { "include": "#interpolation" },
+        {
+          "match": "%[A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*%",
+          "name": "constant.other.placeholder.jc"
+        }
+      ]
+    },
+    "var-decl": {
+      "match": "(?x)\n        (?:(?<![A-Za-z0-9_а-яА-ЯёЁ])(save|game|inline|local|line|jmcc|сохранить|сохранение|игра|встраиваемый|локальный|строка)(?![A-Za-z0-9_а-яА-ЯёЁ])\\s+)?\n        (?<![A-Za-z0-9_а-яА-ЯёЁ])(var|переменная|перем|пусть)(?![A-Za-z0-9_а-яА-ЯёЁ])\\s+\n        ([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)\n      ",
+      "captures": {
+        "1": { "name": "storage.modifier.scope.jc" },
+        "2": { "name": "storage.type.jc" },
+        "3": { "name": "variable.other.jc" }
+      }
+    },
+    "strings": {
+      "patterns": [
+        { "include": "#string-double-prefixed" },
+        { "include": "#string-single-prefixed" },
+        { "include": "#string-double" },
+        { "include": "#string-single" }
+      ]
+    },
+    "string-double-prefixed": {
+      "name": "string.quoted.double.jc",
+      "begin": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([lmpjумпд])(\")",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.prefix.jc" },
+        "2": { "name": "punctuation.definition.string.begin.jc" }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.jc" }
+      },
+      "patterns": [
+        { "include": "#string-contents" }
+      ]
+    },
+    "string-single-prefixed": {
+      "name": "string.quoted.single.jc",
+      "begin": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([lmpjумпд])(')",
+      "beginCaptures": {
+        "1": { "name": "storage.type.string.prefix.jc" },
+        "2": { "name": "punctuation.definition.string.begin.jc" }
+      },
+      "end": "'",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.jc" }
+      },
+      "patterns": [
+        { "include": "#string-contents" }
+      ]
+    },
+    "string-double": {
+      "name": "string.quoted.double.jc",
+      "begin": "\"",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.jc" }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.jc" }
+      },
+      "patterns": [
+        { "include": "#string-contents" }
+      ]
+    },
+    "string-single": {
+      "name": "string.quoted.single.jc",
+      "begin": "'",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.string.begin.jc" }
+      },
+      "end": "'",
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.string.end.jc" }
+      },
+      "patterns": [
+        { "include": "#string-contents" }
+      ]
+    },
+    "string-contents": {
+      "patterns": [
+        {
+          "match": "\\\\.",
+          "name": "constant.character.escape.jc"
+        },
+        { "include": "#interpolation" },
+        {
+          "match": "(&[0-9a-fA-Fk-oK-OrR]|&#[0-9A-Fa-f]{6})",
+          "name": "constant.character.escape.color.jc"
+        },
+        {
+          "match": "%[A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*%",
+          "name": "constant.other.placeholder.jc"
+        },
+        {
+          "begin": "(<)(/?)([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ-]*)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.jc" },
+            "2": { "name": "punctuation.definition.tag.jc" },
+            "3": { "name": "entity.name.tag.jc" }
+          },
+          "end": "(>)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.tag.end.jc" }
+          }
+        }
+      ]
+    },
+    "interpolation": {
+      "name": "meta.embedded.expression.jc",
+      "begin": "(\\$)(\\{)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.template-expression.begin.jc" },
+        "2": { "name": "punctuation.section.embedded.begin.jc" }
+      },
+      "end": "(\\})",
+      "endCaptures": {
+        "1": { "name": "punctuation.section.embedded.end.jc" }
+      },
+      "patterns": [
+        { "include": "$self" }
+      ]
+    },
+    "nbt": {
+      "begin": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([mм])(\\{)",
+      "beginCaptures": {
+        "1": { "name": "storage.type.nbt.jc" },
+        "2": { "name": "punctuation.definition.dict.begin.jc" }
+      },
+      "end": "(\\})",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.dict.end.jc" }
+      },
+      "name": "meta.nbt.jc",
+      "patterns": [
+        { "include": "$self" }
+      ]
+    },
+    "numbers": {
+      "match": "\\b[0-9][0-9_]*(\\.[0-9_]+)?([eE][+-]?[0-9]+)?\\b",
+      "name": "constant.numeric.jc"
+    },
+    "booleans": {
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(true|false|истина|правда|ложь)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+      "name": "constant.language.boolean.jc"
+    },
+    "operators": {
+      "patterns": [
+        {
+          "match": "(\\+=|-=|\\*=|/=|%=|\\^=)",
+          "name": "keyword.operator.assignment.compound.jc"
+        },
+        {
+          "match": "(==|!=|<=|>=)",
+          "name": "keyword.operator.comparison.jc"
+        },
+        {
+          "match": "(<<|>>)",
+          "name": "keyword.operator.bitwise.shift.jc"
+        },
+        {
+          "match": "(\\+\\+|--)",
+          "name": "keyword.operator.increment.jc"
+        },
+        {
+          "match": "\\*\\*",
+          "name": "keyword.operator.arithmetic.jc"
+        },
+        {
+          "match": "(->)",
+          "name": "keyword.operator.arrow.jc"
+        },
+        {
+          "match": "(=>)",
+          "name": "keyword.operator.arrow.jc"
+        },
+        {
+          "match": "(::)",
+          "name": "punctuation.accessor.scope.jc"
+        },
+        {
+          "match": "[=!<>+\\-*/%^&|?:]",
+          "name": "keyword.operator.jc"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "match": "[{}\\[\\]();,.]",
+          "name": "punctuation.jc"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(any|text|number|boolean|array|map|variable|location|item|vector|potion|particle|sound|block|entity|player|iterator|function|любой|текст|число|логическое|булево|массив|список|словарь|карта|переменная|местоположение|локация|предмет|вектор|зелье|частица|звук|блок|сущность|игрок|итератор|функция)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "support.type.builtin.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(plain|legacy|minimessage|json|простой|устаревший|минисообщение|джсон)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "storage.type.string.style.jc"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(__[A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*__)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "support.function.magic.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(self|сам|себя)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "variable.language.self.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(player|entity|world|variable|code|controller|select|repeat|value|игрок|сущность|мир|переменная|код|контроллер|выбор|повтор|значение)(?![A-Za-z0-9_а-яА-ЯёЁ])(?=\\s*::)",
+          "name": "support.class.builtin.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-ZА-ЯЁ][A-ZА-ЯЁ0-9_]+)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "variable.other.constant.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-ZА-ЯЁ][A-Za-z0-9_а-яА-ЯёЁ]*)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "entity.name.type.jc"
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.jc" }
+          }
+        },
+        {
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "name": "variable.other.jc"
+        }
+      ]
+    }
+  }
+}

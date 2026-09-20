@@ -1,0 +1,22 @@
+// Пример простой квестовой системы в JMCC (edition 2026):
+// Демонстрирует:
+// - Функции с логикой проверки условий и возвратом числовых значений
+// - Игровые события и вызовы функций
+// - Условные конструкции и форматирование сообщений
+
+function calculate_remaining(score: number, target: number = 100) -> number {
+    if (score >= target) {
+        return 0;
+    }
+    return target - score;
+}
+
+event<player_join> {
+    line var current_score = 75;
+    line var remaining = calculate_remaining(current_score, 100);
+    if (remaining == 0) {
+        player::message("&a[Квесты]&f Поздравляем! Награда: &6Алмазный меч");
+    } else {
+        player::message("&e[Квесты]&f Неплохо! Требуется ещё &f$remaining &eочков.");
+    }
+}

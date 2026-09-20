@@ -1,0 +1,145 @@
+/// RU: Трёхмерный вектор (X, Y, Z).
+/// EN: 3D vector (X, Y, Z).
+@alias("вектор")
+@lang_item
+export class vector {
+    var x: number;
+    var y: number;
+    var z: number;
+
+    inline function __init__(x: number, y: number, z: number) -> vector {
+        return variable::set_vector(x, y, z);
+    }
+
+    inline function __equals__(first: vector, second: vector) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: vector, second: vector) -> boolean {
+        return first.not_equals(second);
+    }
+
+    inline function __add__(first: vector, second: vector) -> vector {
+        return variable::add_vectors([first, second]);
+    }
+
+    inline function __subtract__(first: vector, second: vector) -> vector {
+        return variable::subtract_vectors([first, second]);
+    }
+
+    inline function __multiply__(first: vector, second: number) -> vector {
+        return variable::multiply_vector(first, second);
+    }
+
+    inline function __divide__(first: vector, second: vector) -> vector {
+        return variable::divide_vector(first, second);
+    }
+
+    /// RU: Компонента X вектора.
+    /// EN: Vector X component.
+    @alias("х")
+    @getter
+    inline function x(self: vector) -> number {
+        return self.get_vector_component("X");
+    }
+
+    /// RU: Компонента Y вектора.
+    /// EN: Vector Y component.
+    @alias("у")
+    @getter
+    inline function y(self: vector) -> number {
+        return self.get_vector_component("Y");
+    }
+
+    /// RU: Компонента Z вектора.
+    /// EN: Vector Z component.
+    @alias("з")
+    @getter
+    inline function z(self: vector) -> number {
+        return self.get_vector_component("Z");
+    }
+
+    /// RU: Установка компоненты X вектора.
+    /// EN: Sets the vector X component.
+    @alias("х")
+    @setter
+    inline function x(self: vector, val: number) -> vector {
+        return self.set_vector_component(val, "X");
+    }
+
+    /// RU: Установка компоненты Y вектора.
+    /// EN: Sets the vector Y component.
+    @alias("у")
+    @setter
+    inline function y(self: vector, val: number) -> vector {
+        return self.set_vector_component(val, "Y");
+    }
+
+    /// RU: Установка компоненты Z вектора.
+    /// EN: Sets the vector Z component.
+    @alias("з")
+    @setter
+    inline function z(self: vector, val: number) -> vector {
+        return self.set_vector_component(val, "Z");
+    }
+
+    inline function __set_attribute__(self, key, value) {
+        self = self.set_vector_component(value, key);
+    }
+
+    inline function __get_attribute__(self, key) {
+        return self.get_vector_component(key);
+    }
+
+    /// RU:
+    /// Возвращает длину вектора.
+    /// EN:
+    /// Returns the length of the vector.
+    @alias("длина")
+    inline function length(self: vector) -> number {
+        return variable::get_vector_length(self, "LENGTH");
+    }
+
+    /// RU:
+    /// Нормализует вектор (приводит к единичной длине).
+    /// EN:
+    /// Normalizes the vector to unit length.
+    @alias("нормализовать")
+    inline function normalize(self: vector) -> vector {
+        var len = variable::get_vector_length(self, "LENGTH");
+        if len == 0 {
+            return self;
+        }
+        return variable::divide_vector(self, vector(len, len, len));
+    }
+
+    /// RU:
+    /// Вычисляет скалярное произведение двух векторов.
+    /// EN:
+    /// Computes the dot product of two vectors.
+    @alias("скалярное_произведение")
+    @alias("скаляр")
+    inline function dot(self: vector, other: vector) -> number {
+        return variable::vector_dot_product(self, other);
+    }
+
+    /// RU:
+    /// Вычисляет векторное произведение двух векторов.
+    /// EN:
+    /// Computes the cross product of two vectors.
+    @alias("векторное_произведение")
+    inline function cross(self: vector, other: vector) -> vector {
+        return variable::vector_cross_product(self, other);
+    }
+}
+
+@test
+function test_vector_properties() {
+    var vec = vector(1, 2, 3);
+    var vx = vec.x;
+    var vy = vec.y;
+    var vz = vec.z;
+    vec.x = 4;
+    vec.y = 5;
+    vec.z = 6;
+}

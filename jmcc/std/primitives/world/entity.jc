@@ -1,0 +1,5 @@
+/// RU: Сущность в игровом мире JustMC.
+/// EN: Entity in the JustMC game world.
+@alias("сущность")
+@lang_item
+export class entity {}

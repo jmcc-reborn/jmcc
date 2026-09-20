@@ -1,0 +1,4 @@
+**/*.map
+.git/**
+.vscode/**
+server/**

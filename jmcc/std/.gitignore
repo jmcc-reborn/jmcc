@@ -1,0 +1,4 @@
+*.ast
+*.hir
+*.mir
+*.json

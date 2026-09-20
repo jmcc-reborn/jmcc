@@ -1,0 +1,58 @@
+//! Modern (English) keyword matching for `.jc`.
+
+use super::Token;
+
+/// Matches an identifier against English reserved keywords.
+#[must_use]
+pub fn keyword(s: &str) -> Option<Token<'static>> {
+    match s {
+        "import" => Some(Token::Import),
+        "var" => Some(Token::Var),
+        "function" => Some(Token::Function),
+        "fun" => Some(Token::Fun),
+        "def" => Some(Token::Def),
+        "process" => Some(Token::Process),
+        "event" => Some(Token::Event),
+        "class" => Some(Token::Class),
+        "enum" => Some(Token::Enum),
+        "inline" => Some(Token::Inline),
+        "local" => Some(Token::Local),
+        "game" => Some(Token::Game),
+        "save" => Some(Token::Save),
+        "line" => Some(Token::Line),
+        "jmcc" => Some(Token::Jmcc),
+        "break" => Some(Token::Break),
+        "ref" => Some(Token::Ref),
+        "if" => Some(Token::If),
+        "else" => Some(Token::Else),
+        "elif" => Some(Token::Elif),
+        "not" => Some(Token::Not),
+        "and" => Some(Token::And),
+        "or" => Some(Token::Or),
+        "in" => Some(Token::In),
+        "return" => Some(Token::Return),
+        "true" => Some(Token::True),
+        "false" => Some(Token::False),
+        "plain" => Some(Token::Plain),
+        "legacy" => Some(Token::Legacy),
+        "minimessage" => Some(Token::Minimessage),
+        "json" => Some(Token::Json),
+        "export" => Some(Token::Export),
+        "from" => Some(Token::From),
+        "as" => Some(Token::As),
+        "const" => Some(Token::Const),
+        "typealias" => Some(Token::TypeAlias),
+        "match" => Some(Token::Match),
+        "case" => Some(Token::Case),
+        "default" => Some(Token::Default),
+        "try" => Some(Token::Try),
+        "catch" => Some(Token::Catch),
+        "throw" => Some(Token::Throw),
+        "interface" => Some(Token::Interface),
+        "implements" => Some(Token::Implements),
+        "extends" => Some(Token::Extends),
+        "while" => Some(Token::While),
+        "for" => Some(Token::For),
+        _ => None,
+    }
+}

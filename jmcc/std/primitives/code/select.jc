@@ -1,0 +1,5 @@
+/// RU: Класс для операций выборки целей в JustMC.
+/// EN: Class for target selection operations in JustMC.
+@alias("выборка")
+@lang_item
+export class select {}

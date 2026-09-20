@@ -1,0 +1,14 @@
+/// RU: Интерфейс вызываемой функции.
+/// EN: Callable function interface.
+@alias("Функция")
+export interface Function<Args, Output> {
+    /// RU: Вызывает функцию с переданными аргументами.
+    /// EN: Calls the function with the provided arguments.
+    @alias("вызов")
+    function call(self: Function<Args, Output>, *args: Args) -> Output;
+}
+
+/// RU: Псевдоним интерфейса функции.
+/// EN: Alias for function interface.
+@alias("Фн")
+export typealias Fn<Args, Output> = Function<Args, Output>;

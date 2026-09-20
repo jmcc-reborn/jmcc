@@ -1,0 +1,33 @@
+var arr: any = [1, 2, 3];
+var x: any = (arr as array)[0];      // Проверка геттера
+(arr as array)[1] = 99;         // Проверка сеттера
+(arr as array)[0:2] = [5, 6];   // Проверка slice-сеттера
+
+
+import 'std/effects/text/bubble.jc';
+import 'std/effects/text/dialog.jc';
+
+event<player_join> {
+    game var %player%_bubble: Bubble = Bubble("%player%");
+    game var %player%_dialog: Dialog = Dialog("%player%", []);
+}
+
+event<player_chat> {
+    if (value::event_chat_message == "story") {
+        var msgs = [
+            DialogMessage(MessageType.TEXT, "Привет, путник!", 60),
+            DialogMessage(MessageType.WAIT, "", 20),
+            DialogMessage(MessageType.TEXT, "Добро пожаловать на сервер."),
+            DialogMessage(MessageType.AUDIO, sound("minecraft:entity.player.levelup", 1, 1), 40)
+        ];
+        
+        %player%_dialog.messages = msgs;
+        %player%_dialog.configure(
+            prefix = "&b[NPC]&f ",
+            type_sounds = [sound("minecraft:block.amethyst_block.place", 1, 2)],
+            bar_type = DialogBarType.ACTION,
+            speed = 2
+        );
+        %player%_dialog.start();
+    }
+}

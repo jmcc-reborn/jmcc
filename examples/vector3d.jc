@@ -1,0 +1,37 @@
+// Пример ООП в JMCC (edition 2026):
+// Пользовательский класс Vector3D с полями, конструктором __init__,
+// перегрузкой оператора сложения (+) и вычислением длины вектора.
+
+export class Vector3D {
+    x: number;
+    y: number;
+    z: number;
+
+    function __init__(self: Vector3D, x: number = 0, y: number = 0, z: number = 0) -> Vector3D {
+        self.x = x;
+        self.y = y;
+        self.z = z;
+        return self;
+    }
+
+    function length_sq(self: Vector3D) -> number {
+        return self.x * self.x + self.y * self.y + self.z * self.z;
+    }
+
+    function __add__(first: Vector3D, second: Vector3D) -> Vector3D {
+        return Vector3D(first.x + second.x, first.y + second.y, first.z + second.z);
+    }
+}
+
+event<player_join> {
+    line var v1 = Vector3D(1, 2, 3);
+    line var v2 = Vector3D(4, 5, 6);
+    line var sum = v1 + v2;
+    line var len_sq = sum.length_sq();
+    line var x = sum.x;
+    line var y = sum.y;
+    line var z = sum.z;
+
+    player::message("&a[Векторы]&f v1 + v2 = ($x, $y, $z)");
+    player::message("&a[Векторы]&f Квадрат длины: $len_sq");
+}

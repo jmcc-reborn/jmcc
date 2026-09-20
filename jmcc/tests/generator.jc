@@ -1,0 +1,132 @@
+/**
+  Пример 2D генерации
+*/
+
+// Первый угол
+inline var corner_1 = location(-10, 3, -10);
+// Второй угол
+inline var corner_2 = location(10, 3, 10);
+
+// Параметры генератора, которые использует шум Перлина
+inline var octaves = 5 + 1 - 1 + 1;
+inline var amplitude = 0.65;
+inline var frequency = 2.75;
+
+function test() {
+  return 0;
+}
+
+/*function test() {
+  return 0;
+}*/
+
+
+// Процесс генерации
+process generate() {
+  local var  a = "sasssssssssasssssssssassssssss";
+  local var  b = "sasssssssssasssssssssassssssss";
+  player::message("sasssssssssasssssssssassssssss");
+  player::message("sasssssssssasssssssssassssssss");
+   player::message(a);
+  local var  y = corner_1.get_coordinate("Y");
+
+  // Координаты первого угла
+  local var  x1 = corner_1.get_coordinate("X");
+  local var  z1 = corner_1.get_coordinate("Z");
+
+  // Координаты второго угла
+  local var  x2 = corner_2.get_coordinate("X");
+  local var  z2 = corner_2.get_coordinate("Z");
+
+  // Минимальные значения координат
+  local var  min_x = [x1, x2].min();
+  local var  min_z = [z1, z2].min();
+
+  // Максимальные значения координат
+  local var  max_x = [x1, x2].max();
+  local var  max_z = [z1, z2].max();
+
+  local var  a = 0 + 1 + 2 + 3 * 3;
+
+  // Ободок сгенерированной доски
+  local var  corner_min = variable::set_all_coordinates(min_x, y, min_z);
+  local var  corner_max = variable::set_all_coordinates(max_x, y, max_z);
+  world::set_region(
+    "dark_oak_planks",
+    corner_min.shift_all_coordinates(-1, 0, -1),
+    corner_max,
+  );
+
+  // Очищаем блоки над доской
+  world::set_region(
+    "air",
+    corner_min.shift_coordinate(1, "Y"),
+    corner_max.shift_coordinate(1, "Y"),
+  );
+
+  // Размеры региона по X и Z координатам
+  local var  distance_x = (max_x - min_x)
+  local var  distance_z = (max_x - min_x)
+
+  // Сколько итераций нужно для генерации
+  local var  iterations_needed = distance_x * distance_z;
+  // Количество итераций генератора
+  local var  iterations = 0;
+  // Сид генерации
+  local var  seed = variable::random_number(0, 9999999);
+  // Тики генерации
+  local var  ticks = test();
+
+  // Итератор
+  function iterator() {
+    local var  x = iterations % distance_x;
+    local var  z = iterations / distance_x;
+    // Смещаем угол на просчитанные координаты
+    local var  location = corner_min.shift_all_coordinates(x, 0, z);
+    // Шум Перлина
+    local var  noise = location.perlin_noise_3d(
+      seed = seed,
+      loc_frequency = 1.0,
+      octaves = octaves,
+      frequency = frequency,
+      amplitude = amplitude, 
+      range_mode = "FULL_RANGE",
+      normalized = true
+    );
+
+    // Случайные блоки
+    local var  block = "grass_block"
+    if (noise.greater(0)) { block = "spruce_slab[waterlogged=true]" }
+
+    // Установка блока
+    world::set_block(location, block);
+
+    // Добавляем итерацию и после этого проверяем, нужно ли
+    // дальше генерировать
+    if ((++iterations).less(iterations_needed)) {
+      // Каждый 10 тик делаем задержку, чтобы не было ошибки рекурсии
+      if (ticks.greater(10)) {
+        code::wait(1);
+        ticks = 0;
+      } else {
+        ticks++;
+      }
+
+      iterator();
+    }
+  }
+
+  iterator();
+  player::message<all_players>("&aГенерация завершена!")
+}
+
+// Событие сообщения
+event<player_chat> {
+  // Если сообщение равно "@generate"
+  if (player::chat_message_equals("@generate")) {
+      player::message<all_players>("&9Генерация...");
+      generate();
+  }
+}
+
+function b() {}

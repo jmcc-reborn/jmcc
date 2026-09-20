@@ -1,0 +1,35 @@
+interface Greeter {
+    function greet(self: Greeter, name: text) -> text;
+}
+
+interface Transformer<T, R> {
+    function transform(self: Transformer<T, R>, item: T) -> R;
+}
+
+interface DetailedGreeter extends Greeter {
+    function greet_detailed(self: DetailedGreeter, name: text, title: text) -> text;
+}
+
+class EnglishGreeter implements DetailedGreeter, Transformer<text, text> {
+    function greet(self: EnglishGreeter, name: text) -> text {
+        return name;
+    }
+
+    function greet_detailed(self: EnglishGreeter, name: text, title: text) -> text {
+        return title;
+    }
+
+    function transform(self: EnglishGreeter, item: text) -> text {
+        return item;
+    }
+}
+
+event<player_join> {
+    var greeter = EnglishGreeter();
+    var msg1 = greeter.greet("World");
+    var msg2 = greeter.greet_detailed("NovIUI", "Dev");
+    var msg3 = greeter.transform("JMCC");
+    player::message(msg1);
+    player::message(msg2);
+    player::message(msg3);
+}

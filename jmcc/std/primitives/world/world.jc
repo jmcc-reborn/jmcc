@@ -1,0 +1,5 @@
+/// RU: Игровой мир JustMC.
+/// EN: JustMC game world.
+@alias("мир")
+@lang_item
+export class world {}

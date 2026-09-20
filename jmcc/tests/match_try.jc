@@ -1,0 +1,26 @@
+function describe(n: number) -> text {
+    match n {
+        0 => "zero",
+        1 | 2 => "small",
+        _ if n > 10 => "big",
+        _ => "other",
+    }
+}
+
+event<player_join> {
+    var kind = describe(1);
+    player::message(kind);
+
+    try {
+        throw ERROR "boom";
+        player::message("unreachable");
+    } catch (err) {
+        player::message("caught");
+    }
+
+    try {
+        player::message("ok");
+    } catch {
+        player::message("no");
+    }
+}

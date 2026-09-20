@@ -1,0 +1,24 @@
+// DFE regression: a process started only by name.
+//
+// `code::start_process` passes the name as a string. When DFE did not count that string as a
+// use, the process was cut from the module: the build passed and the server found nothing to
+// start. Neither process is called with `dropGenerator()` on purpose — if DFE goes back to
+// looking at `ProcCall` alone, they vanish from the emitted JSON.
+//
+// The raw-action warning here is expected: this is what the lint is about.
+
+process dropGenerator() {
+    game var counter: number = 0
+    counter = counter + 1
+}
+
+process mergePoints() {
+    game var first: number = 1
+    game var second: number = 2
+    game var middle: number = (first + second) / 2
+}
+
+event<world_start> {
+    code::start_process("dropGenerator", "DONT_COPY", "NO_TARGET")
+    code::start_process("mergePoints", "DONT_COPY", "NO_TARGET")
+}

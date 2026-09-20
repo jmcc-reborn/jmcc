@@ -1,0 +1,5 @@
+/// RU: Класс для работы с кодом и блоками инструкций JustMC.
+/// EN: Class for interacting with JustMC code blocks and instructions.
+@alias("код")
+@lang_item
+export class code {}

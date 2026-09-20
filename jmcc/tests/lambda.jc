@@ -1,0 +1,55 @@
+inline function apply(x: number, f: Function<number, number>) -> number {
+    return f.call(x);
+}
+
+inline function apply_fn(x: number, f: Fn<number, number>) -> number {
+    return f(x);
+}
+
+class Transformer<T, R> {
+    inline function transform(self, x: T, f: Function<T, R>) -> R {
+        return f(x);
+    }
+}
+
+event<player_join> {
+    var f = (x: number) => x + 1;
+    var res1 = f(10);
+    player::message(res1);
+
+    var add = (a: number, b: number) => a + b;
+    var res2 = add(20, 30);
+    player::message(res2);
+
+    var double = (x: number) => x * 2;
+    var res3 = double(5);
+    player::message(res3);
+
+    var block_fn = (x: number) => {
+        var y = x * 3;
+        return y + 2;
+    };
+    var res4 = block_fn(4);
+    player::message(res4);
+
+    var res5 = apply(100, (x: number) => x + 50);
+    player::message(res5);
+
+    var res6 = apply_fn(200, (x: number) => x + 25);
+    player::message(res6);
+
+    var t = Transformer();
+    var res7 = t.transform(300, (x: number) => x + 10);
+    player::message(res7);
+
+    var mul_fn = (x: number) => x * 7;
+    var res8 = mul_fn(6);
+    player::message(res8);
+
+    var arr = [1, 2, 3];
+    var it = arr.iter();
+    while it.has_next() {
+        var item = it.next();
+        player::message(item);
+    }
+}

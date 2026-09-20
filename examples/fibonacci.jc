@@ -1,0 +1,36 @@
+// Пример вычисления чисел Фибоначчи в JMCC (edition 2026).
+// Демонстрирует:
+// - Функции с возвратом значений через параметр `ret` (строчная область видимости)
+// - Рекурсивный и итеративный алгоритмы
+// - Работу со списками и форматированием строк
+
+function fib_recursive(n: number) -> number {
+    if (n <= 1) {
+        return n;
+    }
+    return fib_recursive(n - 1) + fib_recursive(n - 2);
+}
+
+function fib_iterative(n: number) -> number {
+    if (n <= 1) {
+        return n;
+    }
+    line var a = 0;
+    line var b = 1;
+    line var count = n - 1;
+    repeat::multi_times(count) { c ->
+        line var next = a + b;
+        a = b;
+        b = next;
+    }
+    return b;
+}
+
+event<player_join> {
+    player::message("&a[Фибоначчи]&f Вычисление первых чисел:");
+    repeat::on_range(0, 10) { i ->
+        line var res_rec = fib_recursive(i);
+        line var res_it = fib_iterative(i);
+        player::message("&7F($i) = &e$res_it &7(rec: $res_rec)");
+    }
+}

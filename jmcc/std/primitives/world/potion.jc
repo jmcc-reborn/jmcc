@@ -1,0 +1,85 @@
+/// RU: Эффект зелья в JustMC.
+/// EN: Potion effect in JustMC.
+@alias("зелье")
+@alias("эффект")
+@lang_item
+export class potion {
+    var id: text;
+    var amplifier: number;
+    var duration: number;
+
+    inline function __init__(potion: text, amplifier: number = 0, duration: number = 0) -> potion {
+        /* compiler built-in */
+    }
+
+    inline function __equals__(first: potion, second: potion) -> boolean {
+        return first.equals(second);
+    }
+
+    inline function __not_equals__(first: potion, second: potion) -> boolean {
+        return first.not_equals(second);
+    }
+
+    /// RU: Тип эффекта зелья.
+    /// EN: Potion effect type.
+    @alias("ид")
+    @alias("айди")
+    @getter
+    inline function id(self: potion) -> text {
+        return self.get_potion_effect_type();
+    }
+
+    /// RU: Сила (уровень) эффекта зелья.
+    /// EN: Amplifier (level) of the potion effect.
+    @alias("сила")
+    @alias("уровень")
+    @getter
+    inline function amplifier(self: potion) -> number {
+        return self.get_potion_effect_amplifier();
+    }
+
+    /// RU: Длительность эффекта зелья (в тиках).
+    /// EN: Duration of the potion effect (in ticks).
+    @alias("длительность")
+    @getter
+    inline function duration(self: potion) -> number {
+        return self.get_potion_effect_duration();
+    }
+
+    /// RU: Установка типа эффекта зелья.
+    /// EN: Sets potion effect type.
+    @alias("ид")
+    @alias("айди")
+    @setter
+    inline function id(self: potion, type: text) -> potion {
+        return self.set_potion_effect_type(type);
+    }
+
+    /// RU: Установка силы (уровня) эффекта зелья.
+    /// EN: Sets potion effect amplifier.
+    @alias("сила")
+    @alias("уровень")
+    @setter
+    inline function amplifier(self: potion, amplifier: number) -> potion {
+        return self.set_potion_effect_amplifier(amplifier);
+    }
+
+    /// RU: Установка длительности эффекта зелья.
+    /// EN: Sets potion effect duration.
+    @alias("длительность")
+    @setter
+    inline function duration(self: potion, duration: number) -> potion {
+        return self.set_potion_effect_duration(duration);
+    }
+}
+
+@test
+function test_potion_properties() {
+    var pot = potion("minecraft:speed", 1, 100);
+    var pid = pot.id;
+    var pamp = pot.amplifier;
+    var pdur = pot.duration;
+    pot.id = "minecraft:strength";
+    pot.amplifier = 2;
+    pot.duration = 200;
+}

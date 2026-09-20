@@ -1,0 +1,57 @@
+function test_ranges() {
+    // 1. Exclusive loop with literal bounds
+    var sum1 = 0;
+    for x in 0..5 {
+        sum1 += x;
+    }
+
+    // 2. Inclusive loop with literal bounds
+    var sum2 = 0;
+    for x in 0..=5 {
+        sum2 += x;
+    }
+
+    // 3. Dynamic bounds
+    var a = 2;
+    var b = 7;
+    var sum3 = 0;
+    for x in a..b {
+        sum3 += x;
+    }
+
+    // 4. Index and value in range loop
+    var idx_sum = 0;
+    var val_sum = 0;
+    for i, v in 10..=15 {
+        idx_sum += i;
+        val_sum += v;
+    }
+
+    // 5. Range object methods
+    var r = 0..10;
+    var len1 = r.len();
+    var has5 = r.contains(5);
+    var has10 = r.contains(10);
+    var arr1 = r.to_array();
+
+    // 6. RangeInclusive object methods
+    var ri = 0..=10;
+    var len2 = ri.len();
+    var ri_has10 = ri.contains(10);
+    var arr2 = ri.to_array();
+
+    // 7. Step by
+    var stepped = r.step_by(2);
+    var stepped_arr = stepped.to_array();
+
+    // 8. Iterator directly
+    var it = (1..=3).iter();
+    var it_sum = 0;
+    while it.has_next() {
+        it_sum += it.next();
+    }
+}
+
+event<player_join> {
+    test_ranges();
+}

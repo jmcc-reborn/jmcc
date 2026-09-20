@@ -1,0 +1,5 @@
+/// RU: Класс для манипуляций с переменными JustMC.
+/// EN: Class for manipulating JustMC variables.
+@alias("переменная")
+@lang_item
+export class variable {}

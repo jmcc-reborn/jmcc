@@ -36,6 +36,7 @@ text-size = "1.1"
 
 [build-dependencies]
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
+winresource = "0.1"
 
 [lints]
 workspace = true

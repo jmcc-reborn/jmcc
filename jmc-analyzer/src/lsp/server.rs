@@ -29,7 +29,9 @@ use super::symbols::{provide_document_symbols, provide_workspace_symbols};
 /// # Errors
 ///
 /// Returns an error if the server connection fails or receives an unrecoverable protocol error.
-pub fn run_server() -> Result<(), Box<dyn Error + Send + Sync>> {
+pub fn run_server(
+    cli_std_path: Option<std::path::PathBuf>,
+) -> Result<(), Box<dyn Error + Send + Sync>> {
     let (connection, io_threads) = Connection::stdio();
 
     let server_capabilities = ServerCapabilities {
@@ -73,7 +75,17 @@ pub fn run_server() -> Result<(), Box<dyn Error + Send + Sync>> {
     let init_params: Option<InitializeParams> = serde_json::from_value(init_value).ok();
 
     let mut state = ServerState::new();
+    state.std_path = cli_std_path;
     if let Some(params) = init_params {
+        if state.std_path.is_none()
+            && let Some(init_options) = &params.initialization_options
+            && let Some(std_val) = init_options.get("stdPath")
+            && let Some(std_str) = std_val.as_str()
+            && !std_str.trim().is_empty()
+        {
+            state.std_path = Some(std::path::PathBuf::from(std_str.trim()));
+        }
+
         if let Some(loc) = &params.locale {
             jmcc::i18n::set_lang_by_name(loc);
             state.lang = jmcc::i18n::current_lang();
@@ -163,6 +175,13 @@ fn handle_notification(
         "textDocument/didClose" => {
             let params: DidCloseTextDocumentParams = serde_json::from_value(not.params)?;
             state.close_document(&params.text_document.uri);
+        }
+        "workspace/didChangeWatchedFiles" => {
+            let uris: Vec<_> = state.documents.keys().cloned().collect();
+            for uri in uris {
+                state.compile_document_by_uri(&uri);
+                publish_doc_diagnostics(state, connection, &uri)?;
+            }
         }
         _ => {}
     }

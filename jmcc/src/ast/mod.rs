@@ -14,7 +14,8 @@ pub mod parser;
 pub mod semantic;
 
 pub use import::{
-    parse_file, parse_file_with_options, parse_file_with_overlays, parse_file_with_packages,
+    ImportResolver, parse_file, parse_file_with_full_options, parse_file_with_options,
+    parse_file_with_overlays, parse_file_with_packages,
 };
 pub use lambda_lift::lift_lambdas;
 pub use semantic::{analyze, analyze_for_diagnostics};

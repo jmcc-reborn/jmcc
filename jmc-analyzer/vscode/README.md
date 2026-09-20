@@ -35,8 +35,8 @@ Package the extension with `jmc-analyzer`:
 cargo run -p jmc-analyzer -- pack
 ```
 
-The resulting `.vsix` file is placed in `jmc-analyzer/out/jmc-analyzer-<version>.vsix`. Install in VS Code:
+The resulting `.vsix` file is placed in `jmc-analyzer/out/justcode-lang-<version>.vsix`. Install in VS Code:
 
 ```shell
-code --install-extension jmc-analyzer/out/jmc-analyzer-0.1.0.vsix
+code --install-extension jmc-analyzer/out/justcode-lang-0.1.0.vsix
 ```

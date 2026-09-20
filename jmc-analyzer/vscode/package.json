@@ -1,6 +1,6 @@
 {
-  "name": "jmc-analyzer",
-  "displayName": "JMC Analyzer",
+  "name": "justcode-lang",
+  "displayName": "JustCode for JustMC (JMCC)",
   "description": "Full Language Server (diagnostics, IntelliSense, definitions, hover, rename, semantic tokens) and syntax highlighting for JustCode (.jc)",
   "version": "0.1.0",
   "publisher": "jmcc",
@@ -76,6 +76,11 @@
           "type": "string",
           "default": "",
           "description": "Path to the jmc-analyzer binary. Empty means look up `jmc-analyzer` on PATH."
+        },
+        "jmc.analyzer.stdPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the JustCode standard library directory (std). Defaults to the bundled standard library included with this extension."
         },
         "jmc.analyzer.trace.server": {
           "type": "string",

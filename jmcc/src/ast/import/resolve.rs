@@ -72,6 +72,8 @@ impl ImportResolver {
             [
                 base.join("std").join(name),
                 base.join("std").join("prelude.jc"),
+                base.join(name),
+                base.join("prelude.jc"),
             ]
             .into_iter()
             .find(|p| {
@@ -331,43 +333,118 @@ impl ImportResolver {
     }
 }
 
+fn find_std_via_env() -> Option<PathBuf> {
+    for env_var in ["JMCC_STD_PATH", "JMCC_SYSROOT"] {
+        if let Ok(val) = std::env::var(env_var) {
+            let p = PathBuf::from(val);
+            if p.join("std").is_dir() {
+                debug!(dir = %p.display(), env = env_var, "Found std dir via environment variable");
+                return Some(p);
+            }
+            if (p.join("prelude_2026.jc").is_file() || p.join("prelude_2023.jc").is_file())
+                && let Some(parent) = p.parent()
+            {
+                debug!(dir = %parent.display(), env = env_var, "Found std dir via environment variable (prelude parent)");
+                return Some(parent.to_path_buf());
+            }
+            if p.is_dir() {
+                debug!(dir = %p.display(), env = env_var, "Using environment variable path directly for std");
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+fn find_std_via_exe() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let mut dir = exe.parent()?.to_path_buf();
+    debug!(exe = %exe.display(), "Searching for std dir relative to executable");
+    loop {
+        if dir.join("std").is_dir() {
+            debug!(dir = %dir.display(), "Found std dir relative to exe");
+            return Some(dir);
+        }
+        if dir.join("jmcc").join("std").is_dir() {
+            debug!(dir = %dir.display(), "Found jmcc/std dir relative to exe");
+            return Some(dir.join("jmcc"));
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    None
+}
+
+fn find_std_via_ancestors(root_dir: &Path) -> Option<PathBuf> {
+    for dir in root_dir.ancestors() {
+        if dir.join("std").is_dir() {
+            debug!(dir = %dir.display(), "Found std dir via root_dir ancestors");
+            return Some(dir.to_path_buf());
+        }
+        if dir.join("jmcc").join("std").is_dir() {
+            debug!(dir = %dir.display(), "Found jmcc/std dir via root_dir ancestors");
+            return Some(dir.join("jmcc"));
+        }
+    }
+    None
+}
+
+fn find_std_via_vscode_extension() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    for ext_base in [
+        home.join(".vscode/extensions"),
+        home.join(".vscode-server/extensions"),
+        home.join(".vscode-insiders/extensions"),
+    ] {
+        if ext_base.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&ext_base)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let matches_ext = path.file_name().is_some_and(|n| {
+                    let s = n.to_string_lossy();
+                    s.starts_with("jmcc.justcode") || s.starts_with("jmcc.jmc-analyzer")
+                });
+                if matches_ext && path.join("std").is_dir() {
+                    debug!(dir = %path.display(), "Found std dir in installed VS Code extension");
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
 #[instrument(skip(root_dir), fields(root_dir = %root_dir.display()), level = "debug")]
 pub(super) fn find_std_lib_dir(root_dir: &Path) -> PathBuf {
     let _span = span!(Level::DEBUG, "find_std_lib_dir").entered();
+
+    if let Some(dir) = find_std_via_env() {
+        return dir;
+    }
+
     if let Some(dir) = option_env!("CARGO_MANIFEST_DIR").map(PathBuf::from)
         && dir.join("std").is_dir()
     {
         debug!(dir = %dir.display(), "Found std dir via CARGO_MANIFEST_DIR");
         return dir;
     }
-    if let Ok(exe) = std::env::current_exe()
-        && let Some(mut dir) = exe.parent().map(Path::to_path_buf)
-    {
-        debug!(exe = %exe.display(), "Searching for std dir relative to executable");
-        loop {
-            if dir.join("std").is_dir() {
-                debug!(dir = %dir.display(), "Found std dir relative to exe");
-                return dir;
-            }
-            if dir.join("jmcc").join("std").is_dir() {
-                debug!(dir = %dir.display(), "Found jmcc/std dir relative to exe");
-                return dir.join("jmcc");
-            }
-            if !dir.pop() {
-                break;
-            }
-        }
+
+    if let Some(dir) = find_std_via_exe() {
+        return dir;
     }
-    for dir in root_dir.ancestors() {
-        if dir.join("std").is_dir() {
-            debug!(dir = %dir.display(), "Found std dir via root_dir ancestors");
-            return dir.to_path_buf();
-        }
-        if dir.join("jmcc").join("std").is_dir() {
-            debug!(dir = %dir.display(), "Found jmcc/std dir via root_dir ancestors");
-            return dir.join("jmcc");
-        }
+
+    if let Some(dir) = find_std_via_ancestors(root_dir) {
+        return dir;
     }
+
+    if let Some(dir) = find_std_via_vscode_extension() {
+        return dir;
+    }
+
     warn!(dir = %root_dir.display(), "Falling back to root_dir for std lib");
     root_dir.to_path_buf()
 }

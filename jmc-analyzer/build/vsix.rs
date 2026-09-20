@@ -48,7 +48,38 @@ pub fn pack(manifest: &Path, dest: &Path) -> Result<(), Box<dyn std::error::Erro
         zip.write_all(&fs::read(from)?)?;
     }
 
+    let std_dir = manifest.join("vscode/std");
+    if std_dir.is_dir() {
+        pack_dir_recursive(&std_dir, manifest, &mut zip, options)?;
+    }
+
     zip.finish()?;
+    Ok(())
+}
+
+fn pack_dir_recursive(
+    dir: &Path,
+    manifest: &Path,
+    zip: &mut ZipWriter<File>,
+    options: SimpleFileOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            pack_dir_recursive(&path, manifest, zip, options)?;
+        } else if path.is_file() {
+            let rel = path
+                .strip_prefix(manifest)?
+                .to_str()
+                .ok_or("invalid UTF-8 in path")?;
+            let suffix = rel
+                .strip_prefix("vscode/")
+                .ok_or("path must start with vscode/")?;
+            zip.start_file(format!("extension/{suffix}"), options)?;
+            zip.write_all(&fs::read(&path)?)?;
+        }
+    }
     Ok(())
 }
 
@@ -57,10 +88,10 @@ fn manifest_xml(version: &str) -> String {
         r#"<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
-    <Identity Language="en-US" Id="jmc-analyzer" Version="{version}" Publisher="jmcc" />
-    <DisplayName>JMC Analyzer</DisplayName>
+    <Identity Language="en-US" Id="justcode-lang" Version="{version}" Publisher="jmcc" />
+    <DisplayName>JustCode for JustMC (JMCC)</DisplayName>
     <Description xml:space="preserve">Full Language Server (diagnostics, IntelliSense, definitions, hover, rename, semantic tokens) and syntax highlighting for JustCode (.jc)</Description>
-    <Tags>jmcc,JustCode,JC,jmc-analyzer,justmc,minecraft,diamondfire</Tags>
+    <Tags>jmcc,JustCode,JC,justcode,justcode-lang,justmc,minecraft,diamondfire</Tags>
     <Categories>Programming Languages</Categories>
     <GalleryFlags>Public</GalleryFlags>
     <Properties>

@@ -30,12 +30,16 @@ enum Command {
     },
     /// Assemble the VS Code client into a `.vsix` archive.
     Pack {
-        /// Destination `.vsix` path. Defaults to `out/jmc-analyzer-<version>.vsix`.
+        /// Destination `.vsix` path. Defaults to `out/justcode-lang-<version>.vsix`.
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Start the language server over stdio. Not implemented yet.
-    Lsp,
+    /// Start the language server over stdio.
+    Lsp {
+        /// Optional path to the `JustCode` standard library directory (`std`).
+        #[arg(long)]
+        std_path: Option<PathBuf>,
+    },
 }
 
 #[expect(
@@ -76,7 +80,9 @@ fn run() -> Result<(), CliError> {
             writeln!(io::stderr(), "wrote {}", dest.display())?;
             Ok(())
         }
-        Command::Lsp => lsp::run().map_err(|e| CliError::Lsp(e.to_string())),
+        Command::Lsp { std_path } => {
+            lsp::run_with_std_path(std_path).map_err(|e| CliError::Lsp(e.to_string()))
+        }
     }
 }
 

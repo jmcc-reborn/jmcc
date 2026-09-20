@@ -35,9 +35,9 @@ VS Code-расширение и языковой сервер (LSP) для яз�
 cargo run -p jmc-analyzer -- pack
 ```
 
-Собранный `.vsix` размещается в `jmc-analyzer/out/jmc-analyzer-<версия>.vsix`. Установка в VS Code:
+Собранный `.vsix` размещается в `jmc-analyzer/out/justcode-lang-<версия>.vsix`. Установка в VS Code:
 
 ```shell
-code --install-extension jmc-analyzer/out/jmc-analyzer-0.1.0.vsix
+code --install-extension jmc-analyzer/out/justcode-lang-0.1.0.vsix
 ```
 

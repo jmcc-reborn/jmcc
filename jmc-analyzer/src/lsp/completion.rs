@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 
 use jmcc::ast::*;
+use jmcc::i18n::Lang;
 use jmcc::ir::KNOWN_OBJECTS;
 use jmcc::ir::ctx::{ClassInfo, IrCtx};
 use jmcdata::generated::ACTION_DEF_MAP;
@@ -38,7 +39,7 @@ pub fn provide_completions(doc: &DocumentData, params: &CompletionParams) -> Vec
         if !ident.is_empty() {
             // Check if it's a known JustMC object (player, variable, entity, world, etc.)
             if KNOWN_OBJECTS.contains(&ident) {
-                return complete_justmc_actions(ident);
+                return complete_justmc_actions(ident, doc.lang);
             }
 
             // Check if it's an enum in IrCtx
@@ -74,11 +75,11 @@ pub fn provide_completions(doc: &DocumentData, params: &CompletionParams) -> Vec
     }
 
     // 3. General completions: Keywords, snippets, JustMC objects, types, functions, local vars
-    items.extend(keyword_completions());
-    items.extend(builtin_object_completions());
+    items.extend(keyword_completions(doc.lang));
+    items.extend(builtin_object_completions(doc.lang));
 
     if let Some(ir_ctx) = &doc.ir_ctx {
-        items.extend(global_symbol_completions(ir_ctx));
+        items.extend(global_symbol_completions(ir_ctx, doc.lang));
     }
 
     if let Some(ast) = &doc.ast {
@@ -98,7 +99,7 @@ fn get_line_prefix(text: &str, pos: Position) -> String {
     String::new()
 }
 
-fn complete_justmc_actions(object: &str) -> Vec<CompletionItem> {
+fn complete_justmc_actions(object: &str, lang: Lang) -> Vec<CompletionItem> {
     let mut items = Vec::new();
 
     for ((obj, name), def) in ACTION_DEF_MAP.entries() {
@@ -131,10 +132,17 @@ fn complete_justmc_actions(object: &str) -> Vec<CompletionItem> {
             format!("{name}({})", snippet_args.join(", "))
         };
 
-        let doc_text = format!(
-            "### `{object}::{name}`\n**Действие JustMC**\n- Тип: `{}`\n\n**Параметры:**{}",
-            def.action_type, args_doc
-        );
+        let doc_text = if lang == Lang::Ru {
+            format!(
+                "### `{object}::{name}`\n**Действие JustMC**\n- Тип: `{}`\n\n**Параметры:**{}",
+                def.action_type, args_doc
+            )
+        } else {
+            format!(
+                "### `{object}::{name}`\n**JustMC Action**\n- Type: `{}`\n\n**Parameters:**{}",
+                def.action_type, args_doc
+            )
+        };
 
         items.push(CompletionItem {
             label: (*name).to_owned(),
@@ -262,45 +270,67 @@ fn collect_class_members(ast: &Ast, ir_ctx: &IrCtx, info: &ClassInfo) -> Vec<Com
     items
 }
 
-fn builtin_object_completions() -> Vec<CompletionItem> {
+fn builtin_object_completions(lang: Lang) -> Vec<CompletionItem> {
     KNOWN_OBJECTS
         .iter()
-        .map(|obj| CompletionItem {
-            label: (*obj).to_owned(),
-            kind: Some(CompletionItemKind::CLASS),
-            detail: Some(format!("Встроенный объект JustMC: {obj}")),
-            insert_text: Some(format!("{obj}::")),
-            ..Default::default()
+        .map(|obj| {
+            let detail = if lang == Lang::Ru {
+                format!("Встроенный объект JustMC: {obj}")
+            } else {
+                format!("Built-in JustMC object: {obj}")
+            };
+            CompletionItem {
+                label: (*obj).to_owned(),
+                kind: Some(CompletionItemKind::CLASS),
+                detail: Some(detail),
+                insert_text: Some(format!("{obj}::")),
+                ..Default::default()
+            }
         })
         .collect()
 }
 
-fn global_symbol_completions(ir_ctx: &IrCtx) -> Vec<CompletionItem> {
+fn global_symbol_completions(ir_ctx: &IrCtx, lang: Lang) -> Vec<CompletionItem> {
     let mut items = Vec::new();
 
     for name in ir_ctx.classes_by_name.keys() {
+        let detail = if lang == Lang::Ru {
+            format!("Класс {name}")
+        } else {
+            format!("Class {name}")
+        };
         items.push(CompletionItem {
             label: name.clone(),
             kind: Some(CompletionItemKind::CLASS),
-            detail: Some(format!("Класс {name}")),
+            detail: Some(detail),
             ..Default::default()
         });
     }
 
     for name in ir_ctx.enums_by_name.keys() {
+        let detail = if lang == Lang::Ru {
+            format!("Перечисление {name}")
+        } else {
+            format!("Enum {name}")
+        };
         items.push(CompletionItem {
             label: name.clone(),
             kind: Some(CompletionItemKind::ENUM),
-            detail: Some(format!("Перечисление {name}")),
+            detail: Some(detail),
             ..Default::default()
         });
     }
 
     for name in ir_ctx.type_aliases.keys() {
+        let detail = if lang == Lang::Ru {
+            format!("Псевдоним типа {name}")
+        } else {
+            format!("Type alias {name}")
+        };
         items.push(CompletionItem {
             label: name.clone(),
             kind: Some(CompletionItemKind::INTERFACE),
-            detail: Some(format!("Псевдоним типа {name}")),
+            detail: Some(detail),
             ..Default::default()
         });
     }
@@ -395,105 +425,194 @@ fn local_variable_completions(ast: &Ast, _text: &str, _pos: Position) -> Vec<Com
     items
 }
 
+const fn desc(is_ru: bool, ru: &'static str, en: &'static str) -> &'static str {
+    if is_ru { ru } else { en }
+}
+
 #[expect(clippy::too_many_lines, reason = "Static table of keyword completions")]
-fn keyword_completions() -> Vec<CompletionItem> {
+fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
+    let is_ru = lang == Lang::Ru;
     let keywords = [
         (
             "function",
             "function ${1:name}(${2:params}) {\n\t$0\n}",
-            "Объявление функции",
+            desc(is_ru, "Объявление функции", "Function declaration"),
         ),
         (
             "функция",
             "функция ${1:имя}(${2:параметры}) {\n\t$0\n}",
-            "Объявление функции",
+            desc(is_ru, "Объявление функции", "Function declaration"),
         ),
         (
             "proc",
             "proc ${1:name}(${2:params}) {\n\t$0\n}",
-            "Объявление процесса",
+            desc(is_ru, "Объявление процесса", "Process declaration"),
         ),
         (
             "процесс",
             "процесс ${1:имя}(${2:параметры}) {\n\t$0\n}",
-            "Объявление процесса",
+            desc(is_ru, "Объявление процесса", "Process declaration"),
         ),
         (
             "event",
             "event ${1:player_join} {\n\t$0\n}",
-            "Обработчик события",
+            desc(is_ru, "Обработчик события", "Event handler"),
         ),
         (
             "событие",
             "событие ${1:player_join} {\n\t$0\n}",
-            "Обработчик события",
+            desc(is_ru, "Обработчик события", "Event handler"),
         ),
-        ("class", "class ${1:Name} {\n\t$0\n}", "Объявление класса"),
-        ("класс", "класс ${1:Имя} {\n\t$0\n}", "Объявление класса"),
+        (
+            "class",
+            "class ${1:Name} {\n\t$0\n}",
+            desc(is_ru, "Объявление класса", "Class declaration"),
+        ),
+        (
+            "класс",
+            "класс ${1:Имя} {\n\t$0\n}",
+            desc(is_ru, "Объявление класса", "Class declaration"),
+        ),
         (
             "interface",
             "interface ${1:Name} {\n\t$0\n}",
-            "Объявление интерфейса",
+            desc(is_ru, "Объявление интерфейса", "Interface declaration"),
         ),
         (
             "интерфейс",
             "интерфейс ${1:Имя} {\n\t$0\n}",
-            "Объявление интерфейса",
+            desc(is_ru, "Объявление интерфейса", "Interface declaration"),
         ),
         (
             "enum",
             "enum ${1:Name} {\n\t$0\n}",
-            "Объявление перечисления",
+            desc(is_ru, "Объявление перечисления", "Enum declaration"),
         ),
         (
             "перечисление",
             "перечисление ${1:Имя} {\n\t$0\n}",
-            "Объявление перечисления",
+            desc(is_ru, "Объявление перечисления", "Enum declaration"),
         ),
-        ("if", "if ${1:condition} {\n\t$0\n}", "Условная конструкция"),
+        (
+            "if",
+            "if ${1:condition} {\n\t$0\n}",
+            desc(is_ru, "Условная конструкция", "If condition"),
+        ),
         (
             "если",
             "если ${1:условие} {\n\t$0\n}",
-            "Условная конструкция",
+            desc(is_ru, "Условная конструкция", "If condition"),
         ),
-        ("else", "else {\n\t$0\n}", "Ветвь else"),
-        ("иначе", "иначе {\n\t$0\n}", "Ветвь иначе"),
-        ("elif", "elif ${1:condition} {\n\t$0\n}", "Ветвь elif"),
+        (
+            "else",
+            "else {\n\t$0\n}",
+            desc(is_ru, "Ветвь else", "Else branch"),
+        ),
+        (
+            "иначе",
+            "иначе {\n\t$0\n}",
+            desc(is_ru, "Ветвь иначе", "Else branch"),
+        ),
+        (
+            "elif",
+            "elif ${1:condition} {\n\t$0\n}",
+            desc(is_ru, "Ветвь elif", "Elif branch"),
+        ),
         (
             "иначеесли",
             "иначеесли ${1:условие} {\n\t$0\n}",
-            "Ветвь иначеесли",
+            desc(is_ru, "Ветвь иначеесли", "Elif branch"),
         ),
-        ("while", "while ${1:condition} {\n\t$0\n}", "Цикл while"),
-        ("пока", "пока ${1:условие} {\n\t$0\n}", "Цикл пока"),
+        (
+            "while",
+            "while ${1:condition} {\n\t$0\n}",
+            desc(is_ru, "Цикл while", "While loop"),
+        ),
+        (
+            "пока",
+            "пока ${1:условие} {\n\t$0\n}",
+            desc(is_ru, "Цикл пока", "While loop"),
+        ),
         (
             "for",
             "for ${1:item} in ${2:iter} {\n\t$0\n}",
-            "Цикл for-in",
+            desc(is_ru, "Цикл for-in", "For-in loop"),
         ),
         (
             "для",
             "для ${1:элемент} в ${2:итератор} {\n\t$0\n}",
-            "Цикл для-в",
+            desc(is_ru, "Цикл для-в", "For-in loop"),
         ),
-        ("return", "return $0;", "Возврат из функции"),
-        ("вернуть", "вернуть $0;", "Возврат из функции"),
-        ("break", "break;", "Прерывание цикла"),
-        ("прервать", "прервать;", "Прерывание цикла"),
+        (
+            "return",
+            "return $0;",
+            desc(is_ru, "Возврат из функции", "Return statement"),
+        ),
+        (
+            "вернуть",
+            "вернуть $0;",
+            desc(is_ru, "Возврат из функции", "Return statement"),
+        ),
+        (
+            "break",
+            "break;",
+            desc(is_ru, "Прерывание цикла", "Break statement"),
+        ),
+        (
+            "прервать",
+            "прервать;",
+            desc(is_ru, "Прерывание цикла", "Break statement"),
+        ),
         (
             "var",
             "var ${1:name} = ${2:value};",
-            "Объявление переменной",
+            desc(is_ru, "Объявление переменной", "Variable declaration"),
         ),
-        ("import", "import ${1:module};", "Импорт модуля"),
-        ("импорт", "импорт ${1:модуль};", "Импорт модуля"),
-        ("export", "export ", "Экспорт объявления"),
-        ("экспорт", "экспорт ", "Экспорт объявления"),
-        ("true", "true", "Булево значение: истина"),
-        ("правда", "правда", "Булево значение: правда"),
-        ("false", "false", "Булево значение: ложь"),
-        ("ложь", "ложь", "Булево значение: ложь"),
-        ("null", "null", "Нулевой указатель/значение"),
+        (
+            "import",
+            "import ${1:module};",
+            desc(is_ru, "Импорт модуля", "Module import"),
+        ),
+        (
+            "импорт",
+            "импорт ${1:модуль};",
+            desc(is_ru, "Импорт модуля", "Module import"),
+        ),
+        (
+            "export",
+            "export ",
+            desc(is_ru, "Экспорт объявления", "Export declaration"),
+        ),
+        (
+            "экспорт",
+            "экспорт ",
+            desc(is_ru, "Экспорт объявления", "Export declaration"),
+        ),
+        (
+            "true",
+            "true",
+            desc(is_ru, "Булево значение: истина", "Boolean true"),
+        ),
+        (
+            "правда",
+            "правда",
+            desc(is_ru, "Булево значение: правда", "Boolean true"),
+        ),
+        (
+            "false",
+            "false",
+            desc(is_ru, "Булево значение: ложь", "Boolean false"),
+        ),
+        (
+            "ложь",
+            "ложь",
+            desc(is_ru, "Булево значение: ложь", "Boolean false"),
+        ),
+        (
+            "null",
+            "null",
+            desc(is_ru, "Нулевой указатель/значение", "Null value"),
+        ),
     ];
 
     keywords

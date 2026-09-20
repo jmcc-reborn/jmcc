@@ -738,3 +738,179 @@ fn test_russian_code_inlay_hints() {
         type_labels
     );
 }
+
+#[test]
+fn test_analyzer_std_diagnostics_and_symbols() {
+    let code = r#"
+import "std/ai/nn.jc";
+
+function main() {
+    NeuralNetwork();
+}
+"#;
+    let (state, uri) = create_test_server("file:///tmp/test_nn_missing_args.jc", code);
+    let doc = state.documents.get(&uri).expect("doc should exist");
+    assert!(
+        doc.diagnostics
+            .iter()
+            .any(|d| d.message.contains("layer_sizes")),
+        "Analyzer must report missing required argument 'layer_sizes' from std/ai/nn.jc. Diagnostics: {:?}",
+        doc.diagnostics
+    );
+}
+
+#[test]
+fn test_manifest_locale_en_forces_english_types() {
+    let test_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("tmp_manifest_locale_en");
+    let _ = std::fs::remove_dir_all(&test_dir);
+    std::fs::create_dir_all(&test_dir).unwrap();
+
+    let manifest_path = test_dir.join("jmcc.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[package]
+name = "test_en_pkg"
+version = "0.1.0"
+edition = 2026
+locale = "en"
+"#,
+    )
+    .expect("write jmcc.toml failed");
+
+    let source_path = test_dir.join("main.jc");
+    let code = r#"
+function demo() {
+    var count = 10;
+}
+"#;
+    std::fs::write(&source_path, code).expect("write main.jc failed");
+
+    let mut state = ServerState::new();
+    state.lang = jmcc::i18n::Lang::Ru; // Even if server default is Russian
+
+    let uri = Url::from_file_path(&source_path).unwrap();
+    state.open_document(uri.clone(), 1, code.to_owned());
+    let doc = state.documents.get(&uri).expect("doc should exist");
+
+    assert_eq!(
+        doc.lang,
+        jmcc::i18n::Lang::En,
+        "Manifest locale = 'en' must enforce English language"
+    );
+
+    let params = lsp_types::InlayHintParams {
+        text_document: TextDocumentIdentifier { uri },
+        range: lsp_types::Range::default(),
+        work_done_progress_params: Default::default(),
+    };
+    let hints = jmc_analyzer::lsp::inlay_hints::provide_inlay_hints(doc, &params)
+        .expect("hints must be computed");
+
+    assert!(!hints.is_empty(), "Inlay hints must exist");
+    if let lsp_types::InlayHintLabel::String(label) = &hints[0].label {
+        assert!(
+            label.contains("number"),
+            "Must show 'number', got: '{label}'"
+        );
+        assert!(
+            !label.contains("число"),
+            "Must NOT show 'число', got: '{label}'"
+        );
+    } else {
+        panic!("Expected string label");
+    }
+}
+
+#[test]
+fn test_manifest_locale_ru_forces_russian_types() {
+    let test_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("tmp_manifest_locale_ru");
+    let _ = std::fs::remove_dir_all(&test_dir);
+    std::fs::create_dir_all(&test_dir).unwrap();
+
+    let manifest_path = test_dir.join("jmcc.toml");
+    std::fs::write(
+        &manifest_path,
+        r#"
+[package]
+name = "test_ru_pkg"
+version = "0.1.0"
+edition = 2026
+locale = "ru"
+"#,
+    )
+    .expect("write jmcc.toml failed");
+
+    let source_path = test_dir.join("main.jc");
+    let code = r#"
+function demo() {
+    var count = 10;
+}
+"#;
+    std::fs::write(&source_path, code).expect("write main.jc failed");
+
+    let mut state = ServerState::new();
+    state.lang = jmcc::i18n::Lang::En; // Even if server default is English
+
+    let uri = Url::from_file_path(&source_path).unwrap();
+    state.open_document(uri.clone(), 1, code.to_owned());
+    let doc = state.documents.get(&uri).expect("doc should exist");
+
+    assert_eq!(
+        doc.lang,
+        jmcc::i18n::Lang::Ru,
+        "Manifest locale = 'ru' must enforce Russian language"
+    );
+
+    let params = lsp_types::InlayHintParams {
+        text_document: TextDocumentIdentifier { uri },
+        range: lsp_types::Range::default(),
+        work_done_progress_params: Default::default(),
+    };
+    let hints = jmc_analyzer::lsp::inlay_hints::provide_inlay_hints(doc, &params)
+        .expect("hints must be computed");
+
+    assert!(!hints.is_empty(), "Inlay hints must exist");
+    if let lsp_types::InlayHintLabel::String(label) = &hints[0].label {
+        assert!(label.contains("число"), "Must show 'число', got: '{label}'");
+    } else {
+        panic!("Expected string label");
+    }
+}
+
+#[test]
+fn test_code_language_detection_english_and_russian() {
+    let en_code = r#"
+// Better Than Nothing Anticheat (BTNA)
+game var check_noclip = NoClipCheck();
+event<player_move> {
+    var count = 10;
+}
+"#;
+    let (state_en, uri_en) = create_test_server("file:///tmp/test_detect_en.jc", en_code);
+    let doc_en = state_en.documents.get(&uri_en).expect("doc should exist");
+    assert_eq!(
+        doc_en.lang,
+        jmcc::i18n::Lang::En,
+        "English code must be detected as Lang::En"
+    );
+
+    let ru_code = r#"
+// Античит
+перем флаг: логическое = правда;
+событие<player_move> {
+    перем счетчик = 10;
+}
+"#;
+    let (state_ru, uri_ru) = create_test_server("file:///tmp/test_detect_ru.jc", ru_code);
+    let doc_ru = state_ru.documents.get(&uri_ru).expect("doc should exist");
+    assert_eq!(
+        doc_ru.lang,
+        jmcc::i18n::Lang::Ru,
+        "Russian code must be detected as Lang::Ru"
+    );
+}

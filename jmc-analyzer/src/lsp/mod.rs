@@ -23,5 +23,16 @@ pub use server::run_server;
 ///
 /// Returns an error if the server initialization or message loop fails.
 pub fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    run_server()
+    run_server(None)
+}
+
+/// Entry point to start the LSP server with an optional custom standard library path.
+///
+/// # Errors
+///
+/// Returns an error if the server initialization or message loop fails.
+pub fn run_with_std_path(
+    std_path: Option<std::path::PathBuf>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    run_server(std_path)
 }

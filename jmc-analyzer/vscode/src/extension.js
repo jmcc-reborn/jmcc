@@ -36,9 +36,10 @@ const legend = new vscode.SemanticTokensLegend(TOKEN_TYPES, TOKEN_MODIFIERS);
  * Built-in zero-dependency LSP client over stdio.
  */
 class BuiltinLspClient {
-  constructor(serverPath, outputChannel) {
+  constructor(serverPath, outputChannel, stdPath) {
     this.serverPath = serverPath;
     this.output = outputChannel;
+    this.stdPath = stdPath || null;
     this.process = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -50,8 +51,17 @@ class BuiltinLspClient {
   start() {
     return new Promise((resolve, reject) => {
       try {
-        this.process = spawn(this.serverPath, ["lsp"], {
+        const args = ["lsp"];
+        if (this.stdPath) {
+          args.push("--std-path", this.stdPath);
+        }
+        const env = { ...process.env };
+        if (this.stdPath) {
+          env.JMCC_STD_PATH = this.stdPath;
+        }
+        this.process = spawn(this.serverPath, args, {
           stdio: ["pipe", "pipe", "pipe"],
+          env,
         });
       } catch (err) {
         return reject(err);
@@ -86,6 +96,7 @@ class BuiltinLspClient {
       this.sendRequest("initialize", {
         processId: process.pid,
         rootUri: rootUri,
+        initializationOptions: this.stdPath ? { stdPath: this.stdPath } : {},
         capabilities: {
           textDocument: {
             synchronization: { didSave: true },
@@ -1051,12 +1062,31 @@ async function startServer(context, output) {
     return;
   }
 
+  const configuredStdPath = config.get("stdPath") || "";
+  const bundledStdPath = context ? path.join(context.extensionPath, "std") : "";
+  const effectiveStdPath = configuredStdPath.trim() !== ""
+    ? configuredStdPath.trim()
+    : (bundledStdPath && fs.existsSync(bundledStdPath) ? bundledStdPath : "");
+
+  if (effectiveStdPath) {
+    output.appendLine(`[jmc-analyzer] Using standard library path: ${effectiveStdPath}`);
+  }
+
   // Try vscode-languageclient if available
   let LanguageClient;
   try {
     ({ LanguageClient } = require("vscode-languageclient/node"));
   } catch {
     LanguageClient = null;
+  }
+
+  const lspArgs = ["lsp"];
+  if (effectiveStdPath) {
+    lspArgs.push("--std-path", effectiveStdPath);
+  }
+  const lspEnv = { ...process.env };
+  if (effectiveStdPath) {
+    lspEnv.JMCC_STD_PATH = effectiveStdPath;
   }
 
   if (LanguageClient) {
@@ -1066,7 +1096,9 @@ async function startServer(context, output) {
       "JMC Analyzer",
       {
         command: serverPath,
-        args: ["lsp"],
+        args: lspArgs,
+        options: { env: lspEnv },
+        initializationOptions: effectiveStdPath ? { stdPath: effectiveStdPath } : {},
       },
       {
         documentSelector: [{ language: "jc" }],
@@ -1076,7 +1108,7 @@ async function startServer(context, output) {
     await client.start();
   } else {
     output.appendLine(`Using built-in zero-dependency LSP client with '${serverPath}'`);
-    const builtin = new BuiltinLspClient(serverPath, output);
+    const builtin = new BuiltinLspClient(serverPath, output, effectiveStdPath);
     client = builtin;
     try {
       await builtin.start();

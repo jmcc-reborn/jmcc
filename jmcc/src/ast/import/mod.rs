@@ -55,6 +55,13 @@ impl ImportResolver {
         }
     }
 
+    /// Sets the standard library directory.
+    #[must_use]
+    pub fn with_std_lib_dir(mut self, std_lib_dir: PathBuf) -> Self {
+        self.std_lib_dir = std_lib_dir;
+        self
+    }
+
     /// Sets external package root mappings for dependency resolution.
     #[must_use]
     pub fn with_package_roots(mut self, package_roots: HashMap<String, PathBuf>) -> Self {
@@ -127,6 +134,20 @@ pub fn parse_file_with_options(
     package_roots: HashMap<String, PathBuf>,
     overlays: HashMap<PathBuf, String>,
 ) -> Result<Ast> {
+    parse_file_with_full_options(path, edition, package_roots, overlays, None)
+}
+
+/// # Errors
+///
+/// Returns an error if the source path cannot be resolved, read, or parsed.
+#[instrument(skip(path, package_roots, overlays, custom_std_dir), fields(path = %path.display(), edition), level = "info")]
+pub fn parse_file_with_full_options(
+    path: &Path,
+    edition: u16,
+    package_roots: HashMap<String, PathBuf>,
+    overlays: HashMap<PathBuf, String>,
+    custom_std_dir: Option<PathBuf>,
+) -> Result<Ast> {
     let root_dir = path
         .parent()
         .and_then(|p| {
@@ -144,6 +165,19 @@ pub fn parse_file_with_options(
     let mut resolver = ImportResolver::new(edition, root_dir)
         .with_package_roots(package_roots)
         .with_overlays(overlays);
+    if let Some(std_dir) = custom_std_dir {
+        let resolved_std = if std_dir.join("std").is_dir() {
+            std_dir
+        } else if (std_dir.join("prelude_2026.jc").is_file()
+            || std_dir.join("prelude_2023.jc").is_file())
+            && let Some(parent) = std_dir.parent()
+        {
+            parent.to_path_buf()
+        } else {
+            std_dir
+        };
+        resolver = resolver.with_std_lib_dir(resolved_std);
+    }
     let mut ast = resolver.resolve(path)?;
     crate::ast::lambda_lift::lift_lambdas(&mut ast);
     Ok(ast)

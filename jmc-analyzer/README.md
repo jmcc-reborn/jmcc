@@ -24,4 +24,4 @@ cargo run -p jmc-analyzer -- pack       # Package .vsix extension
 cargo run -p jmc-analyzer -- lsp        # Launch Language Server (stdio)
 ```
 
-`cargo build -p jmc-analyzer` produces `jmc-analyzer/out/jmc-analyzer-<version>.vsix`.
+`cargo build -p jmc-analyzer` produces `jmc-analyzer/out/justcode-lang-<version>.vsix`.

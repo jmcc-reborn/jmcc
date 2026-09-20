@@ -11,7 +11,7 @@ pub fn format_document(
     _params: &DocumentFormattingParams,
 ) -> Option<Vec<TextEdit>> {
     let filename = doc.path.display().to_string();
-    let local_ast = jmcc::ast::parser::parse_string(&doc.text, &filename, 2026, 0).ok()?;
+    let local_ast = jmcc::ast::parser::parse_string(&doc.text, &filename, doc.edition, 0).ok()?;
     let formatted = jmcc::ast::format::format(&local_ast, &doc.text);
 
     if formatted == doc.text {

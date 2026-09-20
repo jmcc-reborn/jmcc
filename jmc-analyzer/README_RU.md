@@ -29,4 +29,4 @@ cargo run -p jmc-analyzer -- lsp        # запуск Language Server (stdio)
 ```
 
 `cargo build -p jmc-analyzer` пишет
-`jmc-analyzer/out/jmc-analyzer-<версия>.vsix`.
+`jmc-analyzer/out/justcode-lang-<версия>.vsix`.

@@ -2,6 +2,8 @@ target/
 /jmc-analyzer/out
 /jmc-analyzer/vscode/syntaxes
 /jmc-analyzer/vscode/language-configuration.json
+/jmc-analyzer/vscode/std
+.vscode/
 
 # Compiler artifacts
 *.ast

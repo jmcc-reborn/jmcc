@@ -4,10 +4,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use jmcc::ast::semantic::{SemanticErrorKind, Type, analyze_for_diagnostics};
-use jmcc::ast::{Ast, ExprId, parse_file_with_overlays};
+use jmcc::ast::{Ast, ExprId, parse_file_with_full_options};
 use jmcc::error::JmccError;
 use jmcc::i18n::{Lang, current_lang};
 use jmcc::ir::ctx::IrCtx;
+use jmcc::project::{Manifest, Project};
 use lsp_types::{Diagnostic, Range, Url};
 
 use super::diagnostics::{compiler_diag_to_lsp, semantic_errors_to_lsp};
@@ -24,6 +25,7 @@ pub struct DocumentData {
     pub diagnostics: Vec<Diagnostic>,
     pub semantic_errors: Vec<(SemanticErrorKind, std::ops::Range<usize>)>,
     pub lang: Lang,
+    pub edition: u16,
 }
 
 /// Global language server workspace and document state.
@@ -31,6 +33,7 @@ pub struct DocumentData {
 pub struct ServerState {
     pub documents: HashMap<Url, DocumentData>,
     pub workspace_root: Option<PathBuf>,
+    pub std_path: Option<PathBuf>,
     pub lang: Lang,
 }
 
@@ -40,6 +43,7 @@ impl ServerState {
         Self {
             documents: HashMap::new(),
             workspace_root: None,
+            std_path: None,
             lang: current_lang(),
         }
     }
@@ -68,19 +72,74 @@ impl ServerState {
         map
     }
 
+    /// Searches for a `jmcc.toml` manifest for the given path or workspace.
+    #[must_use]
+    pub fn find_manifest_for_path(&self, path: &Path) -> Option<Manifest> {
+        let search_dir = if path.is_dir() {
+            path
+        } else {
+            path.parent().unwrap_or(path)
+        };
+        if let Ok(Some(project)) = Project::find(search_dir) {
+            return Some(project.manifest);
+        }
+        if let Some(manifest_path) = Manifest::find_manifest(search_dir)
+            && let Ok(manifest) = Manifest::from_file(&manifest_path)
+        {
+            return Some(manifest);
+        }
+        if let Some(ws_root) = &self.workspace_root {
+            let candidate = ws_root.join("jmcc.toml");
+            if candidate.is_file()
+                && let Ok(manifest) = Manifest::from_file(&candidate)
+            {
+                return Some(manifest);
+            }
+        }
+        None
+    }
+
+    /// Determines the effective language for a document:
+    /// 1. If an enclosing `jmcc.toml` specifies `locale` in `[package]`, `[project]`, or `[profile.dev]`, that locale is authoritative.
+    /// 2. Otherwise, detects the language from code tokens (`detect_code_language`).
+    /// 3. If the code has no language-identifying tokens, falls back to the server/client locale `self.lang`.
+    #[must_use]
+    pub fn determine_lang(&self, path: &Path, text: &str) -> Lang {
+        if let Some(manifest) = self.find_manifest_for_path(path)
+            && let Some(loc) = manifest
+                .locale()
+                .or_else(|| manifest.profile.get("dev").and_then(|p| p.locale.clone()))
+        {
+            let lower = loc.trim().to_lowercase();
+            if lower.starts_with("ru") {
+                return Lang::Ru;
+            } else if lower.starts_with("en") {
+                return Lang::En;
+            }
+        }
+
+        if let Some(code_lang) = detect_code_language(text) {
+            return code_lang;
+        }
+
+        self.lang
+    }
+
+    /// Determines the effective language edition for a document from manifest or default (2026).
+    #[must_use]
+    pub fn determine_edition(&self, path: &Path) -> u16 {
+        self.find_manifest_for_path(path)
+            .map_or(2026, |manifest| manifest.edition())
+    }
+
     /// Registers a newly opened document and triggers compilation.
     pub fn open_document(&mut self, uri: Url, version: i32, text: String) {
         let Some(path) = Self::url_to_path(&uri) else {
             return;
         };
 
-        let lang = if self.lang == Lang::Ru
-            || jmcc::ast::lexer::detect_lexer_kind(&text) == jmcc::ast::lexer::LexerKind::Alternate
-        {
-            Lang::Ru
-        } else {
-            self.lang
-        };
+        let lang = self.determine_lang(&path, &text);
+        let edition = self.determine_edition(&path);
 
         let mut doc = DocumentData {
             uri: uri.clone(),
@@ -93,6 +152,7 @@ impl ServerState {
             diagnostics: Vec::new(),
             semantic_errors: Vec::new(),
             lang,
+            edition,
         };
 
         self.compile_document(&mut doc);
@@ -101,19 +161,18 @@ impl ServerState {
 
     /// Updates the text of an open document and triggers recompilation.
     pub fn update_document(&mut self, uri: &Url, version: i32, text: String) {
+        let Some(path) = self.documents.get(uri).map(|d| d.path.clone()) else {
+            return;
+        };
+        let lang = self.determine_lang(&path, &text);
+        let edition = self.determine_edition(&path);
         if let Some(doc) = self.documents.get_mut(uri) {
             doc.version = version;
             doc.text = text;
-            if self.lang == Lang::Ru
-                || jmcc::ast::lexer::detect_lexer_kind(&doc.text)
-                    == jmcc::ast::lexer::LexerKind::Alternate
-            {
-                doc.lang = Lang::Ru;
-            } else {
-                doc.lang = self.lang;
-            }
-            self.compile_document_by_uri(uri);
+            doc.lang = lang;
+            doc.edition = edition;
         }
+        self.compile_document_by_uri(uri);
     }
 
     /// Closes a document, removing it from active memory.
@@ -124,8 +183,20 @@ impl ServerState {
     /// Recompiles an open document by URI.
     pub fn compile_document_by_uri(&mut self, uri: &Url) {
         let overlays = self.overlays();
+        let std_path = self.std_path.clone();
+        let Some((path, text)) = self
+            .documents
+            .get(uri)
+            .map(|d| (d.path.clone(), d.text.clone()))
+        else {
+            return;
+        };
+        let lang = self.determine_lang(&path, &text);
+        let edition = self.determine_edition(&path);
         if let Some(doc) = self.documents.get_mut(uri) {
-            Self::recompile_doc(doc, overlays, doc.lang);
+            doc.lang = lang;
+            doc.edition = edition;
+            Self::recompile_doc(doc, overlays, doc.lang, std_path.as_deref());
         }
     }
 
@@ -136,22 +207,45 @@ impl ServerState {
         overlays.insert(canon, doc.text.clone());
         overlays.insert(doc.path.clone(), doc.text.clone());
 
-        Self::recompile_doc(doc, overlays, doc.lang);
+        doc.lang = self.determine_lang(&doc.path, &doc.text);
+        doc.edition = self.determine_edition(&doc.path);
+
+        Self::recompile_doc(doc, overlays, doc.lang, self.std_path.as_deref());
     }
 
-    fn recompile_doc(doc: &mut DocumentData, overlays: HashMap<PathBuf, String>, lang: Lang) {
+    fn recompile_doc(
+        doc: &mut DocumentData,
+        overlays: HashMap<PathBuf, String>,
+        lang: Lang,
+        custom_std: Option<&Path>,
+    ) {
         doc.diagnostics.clear();
         doc.semantic_errors.clear();
 
-        // 1. Parse AST with overlays
-        match parse_file_with_overlays(&doc.path, 2026, overlays) {
+        let edition = doc.edition;
+        let package_roots = Project::find(&doc.path)
+            .ok()
+            .flatten()
+            .and_then(|p| p.resolve_dependencies_ext(false, true, true).ok())
+            .map(|g| g.to_package_roots())
+            .unwrap_or_default();
+
+        // 1. Parse AST with overlays and optional custom std path
+        let custom_std_buf = custom_std.map(Path::to_path_buf);
+        match parse_file_with_full_options(
+            &doc.path,
+            edition,
+            package_roots,
+            overlays,
+            custom_std_buf,
+        ) {
             Ok(ast) => {
                 // 2. Build IR context
                 let ir_ctx = IrCtx::new(&ast);
 
                 // 3. Analyze semantics without early bail
                 let (expr_types, semantic_errors) =
-                    analyze_for_diagnostics(&ast, &doc.text, &ir_ctx, 2026);
+                    analyze_for_diagnostics(&ast, &doc.text, &ir_ctx, edition);
 
                 let diags = semantic_errors_to_lsp(&semantic_errors, &ast, &doc.path, lang);
                 doc.diagnostics = diags;
@@ -169,13 +263,13 @@ impl ServerState {
                         let synthetic_ast = jmcc::ast::parser::parse_string(
                             &doc.text,
                             &doc.path.display().to_string(),
-                            2026,
+                            edition,
                             0,
                         )
                         .ok();
                         if let Some(ast) = &synthetic_ast {
                             if let Some(lsp_diag) =
-                                compiler_diag_to_lsp(&diagnostic, ast, &doc.path)
+                                compiler_diag_to_lsp(&diagnostic, ast, &doc.path, lang)
                             {
                                 doc.diagnostics.push(lsp_diag);
                             }
@@ -185,7 +279,8 @@ impl ServerState {
                                 severity: Some(lsp_types::DiagnosticSeverity::ERROR),
                                 code: diagnostic
                                     .code
-                                    .map(|c| lsp_types::NumberOrString::String(c.to_owned())),
+                                    .as_ref()
+                                    .map(|c| lsp_types::NumberOrString::String(c.to_string())),
                                 source: Some("jmc-analyzer".to_owned()),
                                 message: diagnostic.message.clone(),
                                 related_information: None,
@@ -212,6 +307,61 @@ impl ServerState {
             }
         }
     }
+}
+
+/// Detects the language of code tokens in a source string.
+///
+/// Skips comments (`//` and `/* */`) and string literals (`"..."`, `'...'`, `` `...` ``).
+/// - If any Cyrillic character is found in code tokens, returns `Some(Lang::Ru)`.
+/// - If any ASCII Latin letter is found in code tokens (and no Cyrillic), returns `Some(Lang::En)`.
+/// - If no language-identifying letters are present in code tokens, returns `None`.
+#[must_use]
+pub fn detect_code_language(source: &str) -> Option<Lang> {
+    let mut chars = source.char_indices().peekable();
+    let mut has_latin = false;
+    while let Some((_, c)) = chars.next() {
+        match c {
+            '/' => {
+                if let Some(&(_, '/')) = chars.peek() {
+                    chars.next();
+                    for (_, ch) in chars.by_ref() {
+                        if ch == '\n' {
+                            break;
+                        }
+                    }
+                } else if let Some(&(_, '*')) = chars.peek() {
+                    chars.next();
+                    while let Some((_, ch)) = chars.next() {
+                        if ch == '*' && chars.peek().is_some_and(|&(_, next_ch)| next_ch == '/') {
+                            chars.next();
+                            break;
+                        }
+                    }
+                }
+            }
+            '"' | '\'' | '`' => {
+                let quote = c;
+                let mut escaped = false;
+                for (_, ch) in chars.by_ref() {
+                    if escaped {
+                        escaped = false;
+                    } else if ch == '\\' {
+                        escaped = true;
+                    } else if ch == quote {
+                        break;
+                    }
+                }
+            }
+            'а'..='я' | 'А'..='Я' | 'ё' | 'Ё' => {
+                return Some(Lang::Ru);
+            }
+            'a'..='z' | 'A'..='Z' => {
+                has_latin = true;
+            }
+            _ => {}
+        }
+    }
+    if has_latin { Some(Lang::En) } else { None }
 }
 
 /// Recursively walks all statements in a hierarchy, invoking `cb` for each statement.

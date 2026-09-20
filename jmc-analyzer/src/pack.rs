@@ -11,7 +11,7 @@ use zip::write::SimpleFileOptions;
 use super::EXTENSION_FILES;
 
 const PUBLISHER: &str = "jmcc";
-const EXTENSION_ID: &str = "jmc-analyzer";
+const EXTENSION_ID: &str = "justcode-lang";
 
 fn sync_grammar(root: &Path) -> Result<(), PackError> {
     let data = root.join("data");
@@ -25,6 +25,62 @@ fn sync_grammar(root: &Path) -> Result<(), PackError> {
         data.join("language-configuration.json"),
         vscode.join("language-configuration.json"),
     )?;
+    Ok(())
+}
+
+fn sync_std(root: &Path) -> Result<(), PackError> {
+    if let Some(parent) = root.parent() {
+        let std_src = parent.join("jmcc").join("std");
+        let std_dst = root.join("vscode").join("std");
+        copy_jc_recursive(&std_src, &std_dst)?;
+    }
+    Ok(())
+}
+
+fn copy_jc_recursive(src: &Path, dst: &Path) -> Result<(), PackError> {
+    if !src.is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let target = dst.join(file_name);
+        if path.is_dir() {
+            copy_jc_recursive(&path, &target)?;
+        } else if path.extension().is_some_and(|ext| ext == "jc") {
+            fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn pack_dir_recursive(
+    dir: &Path,
+    root: &Path,
+    zip: &mut ZipWriter<File>,
+    options: SimpleFileOptions,
+) -> Result<(), PackError> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            pack_dir_recursive(&path, root, zip, options)?;
+        } else if path.is_file() {
+            let rel = path
+                .strip_prefix(root)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            let suffix = rel
+                .strip_prefix("vscode/")
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            let suffix_str = suffix
+                .to_str()
+                .ok_or_else(|| io::Error::other("invalid UTF-8 in path"))?;
+            zip.start_file(format!("extension/{suffix_str}"), options)?;
+            zip.write_all(&fs::read(&path)?)?;
+        }
+    }
     Ok(())
 }
 
@@ -56,6 +112,7 @@ pub enum PackError {
 pub fn copy_extension(dest: &Path) -> Result<(), PackError> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     sync_grammar(root)?;
+    sync_std(root)?;
     fs::create_dir_all(dest)?;
     for rel in EXTENSION_FILES {
         let from = root.join(rel);
@@ -71,13 +128,17 @@ pub fn copy_extension(dest: &Path) -> Result<(), PackError> {
         }
         fs::copy(&from, &to)?;
     }
+    let std_src = root.join("vscode").join("std");
+    if std_src.is_dir() {
+        copy_jc_recursive(&std_src, &dest.join("std"))?;
+    }
     Ok(())
 }
 
 /// Pack the VS Code client into a `.vsix`.
 ///
 /// When `output` is `None`, the archive is written to
-/// `<crate>/out/jmc-analyzer-<version>.vsix`.
+/// `<crate>/out/justcode-lang-<version>.vsix`.
 ///
 /// # Errors
 ///
@@ -91,6 +152,7 @@ pub fn copy_extension(dest: &Path) -> Result<(), PackError> {
 pub fn pack_vsix(output: Option<PathBuf>) -> Result<PathBuf, PackError> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     sync_grammar(root)?;
+    sync_std(root)?;
     let version = env!("CARGO_PKG_VERSION");
     let dest = output.unwrap_or_else(|| {
         root.join("out")
@@ -124,6 +186,11 @@ pub fn pack_vsix(output: Option<PathBuf>) -> Result<PathBuf, PackError> {
         zip.write_all(&fs::read(&from)?)?;
     }
 
+    let std_dir = root.join("vscode").join("std");
+    if std_dir.is_dir() {
+        pack_dir_recursive(&std_dir, root, &mut zip, options)?;
+    }
+
     zip.finish()?;
     Ok(dest)
 }
@@ -134,9 +201,9 @@ fn vsix_manifest(version: &str) -> String {
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
     <Identity Language="en-US" Id="{EXTENSION_ID}" Version="{version}" Publisher="{PUBLISHER}" />
-    <DisplayName>JMC Analyzer</DisplayName>
+    <DisplayName>JustCode for JustMC (JMCC)</DisplayName>
     <Description xml:space="preserve">Full Language Server (diagnostics, IntelliSense, definitions, hover, rename, semantic tokens) and syntax highlighting for JustCode (.jc)</Description>
-    <Tags>jmcc,JustCode,JC,jmc-analyzer,justmc,minecraft,diamondfire</Tags>
+    <Tags>jmcc,JustCode,JC,justcode,justcode-lang,justmc,minecraft,diamondfire</Tags>
     <Categories>Programming Languages</Categories>
     <GalleryFlags>Public</GalleryFlags>
     <Properties>

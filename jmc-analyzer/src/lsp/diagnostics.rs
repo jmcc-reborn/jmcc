@@ -73,6 +73,7 @@ pub fn compiler_diag_to_lsp(
     diag: &jmcc::diagnostic::Diagnostic,
     ast: &Ast,
     target_path: &Path,
+    lang: Lang,
 ) -> Option<Diagnostic> {
     let severity = match diag.level {
         DiagnosticLevel::Error => DiagnosticSeverity::ERROR,
@@ -110,11 +111,21 @@ pub fn compiler_diag_to_lsp(
         message.push_str(&format!(" ({lbl})"));
     }
 
+    let note_prefix = if lang == Lang::Ru {
+        "Примечание:"
+    } else {
+        "Note:"
+    };
+    let help_prefix = if lang == Lang::Ru {
+        "Подсказка:"
+    } else {
+        "Help:"
+    };
     for note in &diag.notes {
-        message.push_str(&format!("\nПримечание: {note}"));
+        message.push_str(&format!("\n{note_prefix} {note}"));
     }
     for help in &diag.helps {
-        message.push_str(&format!("\nПодсказка: {help}"));
+        message.push_str(&format!("\n{help_prefix} {help}"));
     }
 
     Some(Diagnostic {
@@ -148,11 +159,21 @@ pub fn semantic_errors_to_lsp(
         let compiler_diag = semantic_to_diagnostic(kind, span, ast, lang);
 
         let mut message = kind.format_localized(lang);
+        let note_prefix = if lang == Lang::Ru {
+            "Примечание:"
+        } else {
+            "Note:"
+        };
+        let help_prefix = if lang == Lang::Ru {
+            "Подсказка:"
+        } else {
+            "Help:"
+        };
         for note in &compiler_diag.notes {
-            message.push_str(&format!("\nПримечание: {note}"));
+            message.push_str(&format!("\n{note_prefix} {note}"));
         }
         for help in &compiler_diag.helps {
-            message.push_str(&format!("\nПодсказка: {help}"));
+            message.push_str(&format!("\n{help_prefix} {help}"));
         }
 
         let severity = match compiler_diag.level {

@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/jmcc-reborn/jmcc/actions/workflows/ci.yml/badge.svg)](https://github.com/jmcc-reborn/jmcc/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-%D0%A1%D0%BE%D0%BE%D0%B1%D1%89%D0%B5%D1%81%D1%82%D0%B2%D0%BE-5865F2?logo=discord&logoColor=white)](https://discord.gg/Adx3H3zAFU)
 
 > [!NOTE]
 > English version is available at [README.md](README.md).
@@ -259,3 +260,10 @@ cargo test
 - [jmcdata/README.md](jmcdata/README.md) ([RU](jmcdata/README_RU.md)) — Схема JustMC, генерация структур из JSON-ассетов.
 - [jmcmock/README.md](jmcmock/README.md) ([RU](jmcmock/README_RU.md)) — Руководство по мок-рантайму и эмуляции исполнения.
 - [jmc-analyzer/README.md](jmc-analyzer/README.md) ([RU](jmc-analyzer/README_RU.md)) — Языковой сервер и расширение для VS Code.
+
+---
+
+## 8. Сообщество
+
+- **Discord**: Присоединяйтесь к нашему сообществу для обсуждений, вопросов и новостей: [https://discord.gg/Adx3H3zAFU](https://discord.gg/Adx3H3zAFU)
+

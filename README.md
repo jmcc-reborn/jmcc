@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/jmcc-reborn/jmcc/actions/workflows/ci.yml/badge.svg)](https://github.com/jmcc-reborn/jmcc/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT%20%7C%20Apache--2.0-blue.svg)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Community-5865F2?logo=discord&logoColor=white)](https://discord.gg/Adx3H3zAFU)
 
 > [!NOTE]
 > The Russian version of this document is available at [README_RU.md](README_RU.md).
@@ -259,3 +260,10 @@ The test harness covers:
 - [jmcdata/README.md](jmcdata/README.md) ([RU](jmcdata/README_RU.md)) — JustMC schema, asset generation.
 - [jmcmock/README.md](jmcmock/README.md) ([RU](jmcmock/README_RU.md)) — Mock runtime guide and simulation environment.
 - [jmc-analyzer/README.md](jmc-analyzer/README.md) ([RU](jmc-analyzer/README_RU.md)) — Language Server and VS Code extension.
+
+---
+
+## 8. Community
+
+- **Discord**: Join our community for questions, discussions, and updates: [https://discord.gg/Adx3H3zAFU](https://discord.gg/Adx3H3zAFU)
+

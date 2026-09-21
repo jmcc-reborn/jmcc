@@ -244,7 +244,7 @@ impl<'a> CopyPropContext<'a> {
 
             Hir::Action(ids) => self.visit_action(&ids, copy_map),
 
-            Hir::Break | Hir::Nop => self.add(node),
+            Hir::Break | Hir::Continue | Hir::Nop => self.add(node),
 
             _ => self.visit_children(node, copy_map),
         }

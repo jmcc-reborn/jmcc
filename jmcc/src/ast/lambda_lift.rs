@@ -43,6 +43,7 @@ pub fn lift_lambdas(ast: &mut Ast) {
 
         let func_decl = FunctionDecl {
             name: fn_name,
+            generics: Vec::new(),
             params: lambda.params.clone(),
             return_type: lambda.return_type,
             body: fn_body,
@@ -50,6 +51,7 @@ pub fn lift_lambdas(ast: &mut Ast) {
             is_exported: false,
             is_getter: false,
             is_setter: false,
+            is_overload: false,
             aliases: vec![],
             test_attr: None,
             span: lambda.span.clone(),
@@ -98,6 +100,7 @@ pub fn lift_lambdas(ast: &mut Ast) {
         let call_method_name = ast.strings.get_or_intern("call");
         let call_method = FunctionDecl {
             name: call_method_name,
+            generics: Vec::new(),
             params: call_params,
             return_type: lambda.return_type,
             body: call_body,
@@ -105,6 +108,7 @@ pub fn lift_lambdas(ast: &mut Ast) {
             is_exported: false,
             is_getter: false,
             is_setter: false,
+            is_overload: false,
             aliases: vec![],
             test_attr: None,
             span: lambda.span.clone(),

@@ -113,7 +113,8 @@ impl<'a> CostAnalyzer<'a> {
             | Hir::Shl([a, b])
             | Hir::Shr([a, b])
             | Hir::And([a, b])
-            | Hir::Or([a, b]) => {
+            | Hir::Or([a, b])
+            | Hir::In([a, b]) => {
                 self.cost += inline_constants::INSTR_COST;
                 self.analyze(*a);
                 self.analyze(*b);
@@ -229,6 +230,10 @@ impl<'a> InlineAdvisor<'a> {
             return InlineCost::Never("arity mismatch or variadic parameters");
         }
 
+        if has_early_or_multiple_returns(self.expr, callee.body_id) {
+            return InlineCost::Never("callee contains early or multiple returns");
+        }
+
         for (i, param_name) in callee.params.iter().enumerate() {
             if let Some(&arg_id) = arg_ids.get(i)
                 && let Some(c) = eval_const_arg(self.expr, arg_id)
@@ -282,5 +287,58 @@ impl<'a> InlineAdvisor<'a> {
                 reason: "cost exceeds threshold",
             }
         }
+    }
+}
+
+fn has_early_or_multiple_returns(expr: &RecExpr<Hir>, body_id: Id) -> bool {
+    let mut return_count = 0;
+    count_returns(expr, body_id, &mut return_count);
+    if return_count == 0 {
+        return false;
+    }
+    if return_count > 1 {
+        return true;
+    }
+    // Exactly 1 return. Check if it is in tail position.
+    !is_tail_return(expr, body_id)
+}
+
+fn count_returns(expr: &RecExpr<Hir>, id: Id, count: &mut usize) {
+    let node = &expr[id];
+    if matches!(node, Hir::Return(_)) {
+        *count += 1;
+    }
+    for child in node.children() {
+        count_returns(expr, *child, count);
+    }
+}
+
+fn is_tail_return(expr: &RecExpr<Hir>, id: Id) -> bool {
+    match &expr[id] {
+        Hir::Return(_) => true,
+        Hir::Block(stmts) => {
+            if let Some(&last) = stmts.last() {
+                // Ensure all earlier statements have 0 returns
+                let mut earlier_returns = 0;
+                for &s in &stmts[..stmts.len() - 1] {
+                    count_returns(expr, s, &mut earlier_returns);
+                }
+                if earlier_returns > 0 {
+                    return false;
+                }
+                is_tail_return(expr, last)
+            } else {
+                false
+            }
+        }
+        Hir::Let([_var, val, body]) => {
+            let mut val_returns = 0;
+            count_returns(expr, *val, &mut val_returns);
+            if val_returns > 0 {
+                return false;
+            }
+            is_tail_return(expr, *body)
+        }
+        _ => false,
     }
 }

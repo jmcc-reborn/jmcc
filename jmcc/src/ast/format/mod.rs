@@ -84,6 +84,7 @@ impl<'a> Formatter<'a> {
             Statement::While(w) => w.span.clone(),
             Statement::For(f) => f.span.clone(),
             Statement::Break(b) => b.span.clone(),
+            Statement::Continue(c) => c.span.clone(),
             Statement::VarDecl(v) => v.span.clone(),
             Statement::Assign(a) => a.span.clone(),
             Statement::Return(r) => r.span.clone(),

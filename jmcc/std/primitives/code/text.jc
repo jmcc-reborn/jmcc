@@ -149,4 +149,13 @@ export class text {
     inline function starts_with(self: text, prefix: text) -> boolean {
         return variable::text_starts_with(self, [prefix]);
     }
+
+    /// RU:
+    /// Проверяет, содержится ли подстрока в тексте.
+    /// EN:
+    /// Checks if a substring is contained within the text.
+    @alias("contains", "содержит")
+    inline function __contains__(first: text, second: text) -> boolean {
+        return variable::text_contains(first, [second]);
+    }
 }

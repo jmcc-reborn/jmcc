@@ -252,7 +252,7 @@ export class Range implements Iterable<number>, Iterator<number> {
     /// Проверяет, содержится ли число в диапазоне.
     /// EN:
     /// Checks if a number is contained within the range.
-    @alias("содержит")
+    @alias("__contains__", "содержит")
     function contains(self: Range, val: number) -> boolean {
         if self.step > 0 {
             if (val < self.start or val >= self.end) {
@@ -391,7 +391,7 @@ export class RangeInclusive implements Iterable<number>, Iterator<number> {
     /// Проверяет, содержится ли число в диапазоне.
     /// EN:
     /// Checks if a number is contained within the range.
-    @alias("содержит")
+    @alias("__contains__", "содержит")
     function contains(self: RangeInclusive, val: number) -> boolean {
         if self.step > 0 {
             if (val < self.start or val > self.end) {

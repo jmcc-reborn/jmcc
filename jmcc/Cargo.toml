@@ -25,8 +25,8 @@ egg = "0.11"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
-jmcdata = { version = "0.1", path = "../jmcdata" }
-jmcmock = { version = "0.1", path = "../jmcmock" }
+jmcdata = { path = "../jmcdata" }
+jmcmock = { path = "../jmcmock" }
 litemap = "0.8"
 ordered-float = "5.3"
 simdnbt = "0.10"

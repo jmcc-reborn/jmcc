@@ -98,32 +98,34 @@ impl Analyzer<'_> {
 
     #[instrument(skip(self, f), level = "trace")]
     pub(super) fn analyze_function(&mut self, f: &FunctionDecl) {
-        let full_name = self.str(f.name);
-        // Take the type from the symbol predeclared earlier: the `return` inference must land in
-        // the same variable. Matching the declaration span tells this function from a namesake
-        // declared in another scope.
-        let return_type = match self.lookup(&full_name) {
-            Some(Symbol::Func {
-                return_type, span, ..
-            }) if span == f.span => return_type,
-            _ => self.inferred_return_type(f),
-        };
-        let short_name = full_name
-            .rsplit("::")
-            .next()
-            .unwrap_or(&full_name)
-            .to_owned();
+        self.with_generic_scope(&f.generics, |this| {
+            let full_name = this.str(f.name);
+            // Take the type from the symbol predeclared earlier: the `return` inference must land in
+            // the same variable. Matching the declaration span tells this function from a namesake
+            // declared in another scope.
+            let return_type = match this.lookup(&full_name) {
+                Some(Symbol::Func {
+                    return_type, span, ..
+                }) if span == f.span => return_type,
+                _ => this.inferred_return_type(f),
+            };
+            let short_name = full_name
+                .rsplit("::")
+                .next()
+                .unwrap_or(&full_name)
+                .to_owned();
 
-        let is_property = f.is_getter || f.is_setter;
-        if is_property {
-            self.getter_setter_stack.push(short_name);
-        }
+            let is_property = f.is_getter || f.is_setter;
+            if is_property {
+                this.getter_setter_stack.push(short_name);
+            }
 
-        self.analyze_callable(&f.body, &f.params, return_type, true);
+            this.analyze_callable(&f.body, &f.params, return_type, true);
 
-        if is_property {
-            self.getter_setter_stack.pop();
-        }
+            if is_property {
+                this.getter_setter_stack.pop();
+            }
+        });
     }
 
     #[instrument(skip(self, p), level = "trace")]
@@ -209,6 +211,7 @@ pub(super) fn has_value_return(stmts: &[Statement]) -> bool {
         | Statement::Enum(_)
         | Statement::TypeAlias(_)
         | Statement::Break(_)
+        | Statement::Continue(_)
         | Statement::VarDecl(_)
         | Statement::Assign(_)
         | Statement::Expr(_)

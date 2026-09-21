@@ -70,7 +70,7 @@ fn test_icu_plurals_russian_and_english() {
 #[test]
 fn test_localized_diagnostic_output() {
     let temp_dir = std::env::temp_dir().join("jmcc_test_i18n_err");
-    let _ = std::fs::create_dir_all(&temp_dir);
+    drop(std::fs::create_dir_all(&temp_dir));
     let bad_file = temp_dir.join("bad.jc");
     std::fs::write(&bad_file, "function test() { var x = unknown_func_xyz(); }")
         .expect("write bad file");
@@ -95,5 +95,5 @@ fn test_localized_diagnostic_output() {
         "English error should be localized, got: {err_en_str}"
     );
 
-    let _ = std::fs::remove_file(bad_file);
+    drop(std::fs::remove_file(bad_file));
 }

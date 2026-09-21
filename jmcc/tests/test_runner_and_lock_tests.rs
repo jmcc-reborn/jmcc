@@ -9,7 +9,7 @@ use jmcc::project::lockfile::Lockfile;
 use jmcc::test_runner::{TestOptions, run_tests};
 
 fn setup_test_workspace(base_dir: &Path) {
-    let _ = fs::remove_dir_all(base_dir);
+    drop(fs::remove_dir_all(base_dir));
     fs::create_dir_all(base_dir).unwrap();
 
     // 1. Dependency "utils"

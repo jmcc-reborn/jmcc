@@ -48,6 +48,10 @@ struct Cli {
     #[arg(short, long, value_name = "NAME")]
     event: Vec<String>,
 
+    /// Path to a JSON scenario file describing a sequence of actions and events.
+    #[arg(short = 's', long, value_name = "FILE")]
+    scenario: Option<PathBuf>,
+
     /// The event's text (`event_chat_message`).
     #[arg(long, value_name = "TEXT")]
     chat: Option<String>,
@@ -120,7 +124,16 @@ fn main() -> ExitCode {
         )
         .init();
 
-    let cli = Cli::parse();
+    let args: Vec<_> = std::env::args_os().collect();
+    let filtered_args: Vec<_> = if args.len() > 1 && args[1] == "run" {
+        let mut new_args = Vec::with_capacity(args.len() - 1);
+        new_args.push(args[0].clone());
+        new_args.extend_from_slice(&args[2..]);
+        new_args
+    } else {
+        args
+    };
+    let cli = Cli::parse_from(filtered_args);
     tracing::debug!(module = %cli.module.display(), "jmcmock started");
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
@@ -152,7 +165,12 @@ fn run(cli: &Cli) -> Result<(), RuntimeError> {
         runtime.world_mut().add_player(player.clone());
     }
 
-    let played = play(&mut runtime, cli);
+    let played = if let Some(scenario_path) = &cli.scenario {
+        let scenario = jmcmock::Scenario::from_file(scenario_path)?;
+        scenario.run(&mut runtime)
+    } else {
+        play(&mut runtime, cli)
+    };
     // Saving and printing happen before the outcome is unwrapped: both must
     // happen however the run ended, a failed one included.
     let saved = runtime.persist_save();

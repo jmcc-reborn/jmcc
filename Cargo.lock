@@ -1050,7 +1050,7 @@ checksum = "4d3667095d64c3ecffc96463a21157b04bf3e252f6e8d5750b20c02e33c194e3"
 
 [[package]]
 name = "jmc-analyzer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "crossbeam-channel",
@@ -1069,7 +1069,7 @@ dependencies = [
 
 [[package]]
 name = "jmcc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "annotate-snippets",
  "base64",
@@ -1105,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "jmcdata"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "heck",
  "litemap",
@@ -1120,13 +1120,14 @@ dependencies = [
 
 [[package]]
 name = "jmcmock"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "jmcc",
  "jmcdata",
  "litemap",
  "ordered-float",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tracing",

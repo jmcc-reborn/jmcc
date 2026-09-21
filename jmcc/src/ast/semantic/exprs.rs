@@ -71,6 +71,11 @@ impl Analyzer<'_> {
     }
 
     fn analyze_variable(&mut self, variable: &VariableExpr) -> Type {
+        let has_interp = variable
+            .name
+            .parts
+            .iter()
+            .any(|part| matches!(part, TextPart::Interp(_)));
         for part in &variable.name.parts {
             if let TextPart::Interp(eid) = part {
                 self.analyze_expr(*eid);
@@ -81,7 +86,16 @@ impl Analyzer<'_> {
             Some(Symbol::Var { ty, .. } | Symbol::Param { ty }) => ty,
             Some(Symbol::Func { .. }) => Type::Unknown,
             Some(Symbol::Proc { .. }) => Type::Never,
-            None => self.analyze_unresolved_name(name, &variable.span),
+            None => {
+                if has_interp
+                    || name.contains('%')
+                    || matches!(variable.scope, VarScope::Save | VarScope::Game)
+                {
+                    Type::Unknown
+                } else {
+                    self.analyze_unresolved_name(name, &variable.span)
+                }
+            }
         }
     }
 
@@ -379,7 +393,11 @@ impl Analyzer<'_> {
         _resolved_left: &Type,
     ) -> Option<Type> {
         let dunder = op_to_dunder(&binary.op)?;
-        self.lookup_binary_dunder(dunder, left, right, &binary.span)
+        if binary.op == BinOp::In {
+            self.lookup_binary_dunder(dunder, right, left, &binary.span)
+        } else {
+            self.lookup_binary_dunder(dunder, left, right, &binary.span)
+        }
     }
 
     #[instrument(skip(self, p), level = "trace")]
@@ -491,6 +509,7 @@ impl Analyzer<'_> {
 
         if let Some(end) = s.end {
             self.analyze_expr(end);
+            let mut missing_slice_getter = false;
             if let Type::Class(initial_def, initial_args) = &resolved_ty {
                 let mut current_def = *initial_def;
                 let mut current_args = initial_args.clone();
@@ -501,6 +520,9 @@ impl Analyzer<'_> {
                     {
                         return self.callable_return_type(Some(ret_ty), &class, &subst, &s.span);
                     }
+                    if class.methods.contains_key("__slice__") {
+                        missing_slice_getter = true;
+                    }
                     let Some((def, args)) = self.parent_step(&class, current_def, &subst) else {
                         break;
                     };
@@ -508,18 +530,20 @@ impl Analyzer<'_> {
                     current_args = args;
                 }
             }
-            if matches!(resolved_ty, Type::Class(_, _)) {
+            if matches!(resolved_ty, Type::Class(_, _)) && !missing_slice_getter {
                 return resolved_ty;
             }
             self.error(
                 SemanticErrorKind::InvalidSlice {
                     ty: self.format_type(&resolved_ty),
+                    missing_getter: missing_slice_getter,
                 },
                 s.span.clone(),
             );
             return Type::Unknown;
         }
 
+        let mut missing_subscript_getter = false;
         if let Type::Class(initial_def, initial_args) = &resolved_ty {
             let mut current_def = *initial_def;
             let mut current_args = initial_args.clone();
@@ -530,6 +554,10 @@ impl Analyzer<'_> {
                     && let Some(ret_ty) = getter.return_type
                 {
                     return self.callable_return_type(Some(ret_ty), &class, &subst, &s.span);
+                }
+
+                if class.methods.contains_key("__subscript__") {
+                    missing_subscript_getter = true;
                 }
 
                 let array_id = self.ir_ctx.lang_items.get("array").copied().unwrap_or(0);
@@ -557,6 +585,7 @@ impl Analyzer<'_> {
         self.error(
             SemanticErrorKind::InvalidSubscript {
                 ty: self.format_type(&resolved_ty),
+                missing_getter: missing_subscript_getter,
             },
             s.span.clone(),
         );
@@ -578,11 +607,11 @@ const fn op_to_dunder(op: &BinOp) -> Option<&'static str> {
         BinOp::Lt => Some("__less__"),
         BinOp::Ge => Some("__greater_or_equals__"),
         BinOp::Le => Some("__less_or_equals__"),
-        BinOp::BitAnd => Some("__bit_and__"),
-        BinOp::BitOr => Some("__bit_or__"),
-        BinOp::BitXor => Some("__bit_xor__"),
-        BinOp::Shl => Some("__shl__"),
-        BinOp::Shr => Some("__shr__"),
+        BinOp::BitAnd => Some("__bitand__"),
+        BinOp::BitOr => Some("__bitor__"),
+        BinOp::BitXor => Some("__bitxor__"),
+        BinOp::Shl => Some("__lshift__"),
+        BinOp::Shr => Some("__rshift__"),
         BinOp::In => Some("__contains__"),
         _ => None,
     }

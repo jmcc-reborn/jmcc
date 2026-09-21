@@ -285,7 +285,11 @@ class BuiltinLspClient {
               if (!res) return [];
               const items = Array.isArray(res) ? res : res.items || [];
               return items.map((item) => {
-                const ci = new vscode.CompletionItem(item.label, item.kind - 1);
+                const kind =
+                  typeof item.kind === "number" && item.kind > 0
+                    ? item.kind - 1
+                    : vscode.CompletionItemKind.Text;
+                const ci = new vscode.CompletionItem(item.label, kind);
                 if (item.detail) ci.detail = item.detail;
                 if (item.documentation) {
                   const docVal =
@@ -300,6 +304,8 @@ class BuiltinLspClient {
                       ? new vscode.SnippetString(item.insertText)
                       : item.insertText;
                 }
+                if (item.sortText) ci.sortText = item.sortText;
+                if (item.filterText) ci.filterText = item.filterText;
                 return ci;
               });
             } catch {
@@ -308,7 +314,9 @@ class BuiltinLspClient {
           },
         },
         ":",
-        "."
+        ".",
+        "<",
+        "@"
       )
     );
 

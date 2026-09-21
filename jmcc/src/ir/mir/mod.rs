@@ -38,6 +38,7 @@ define_language! {
 
         "!" = Not(Id),
         "break" = Break,
+        "continue" = Continue,
         "return_func" = ReturnFunc(Id),
 
         "set" = Set([Id; 2]),

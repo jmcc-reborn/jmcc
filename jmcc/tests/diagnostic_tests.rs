@@ -53,7 +53,7 @@ fn test_pretty_parser_syntax_error() {
 #[test]
 fn test_pretty_semantic_error_unknown_action() {
     let temp_dir = std::env::temp_dir().join("jmcc_pretty_test_action");
-    let _ = fs::create_dir_all(&temp_dir);
+    drop(fs::create_dir_all(&temp_dir));
     let file_path = temp_dir.join("test_action.jc");
     fs::write(
         &file_path,
@@ -71,13 +71,13 @@ fn test_pretty_semantic_error_unknown_action() {
     assert!(rendered.contains("^^^^^^^^^^^^^^^^"));
     assert!(rendered.contains("aborting due to") || rendered.contains("прервано из-за"));
 
-    let _ = fs::remove_file(file_path);
+    drop(fs::remove_file(file_path));
 }
 
 #[test]
 fn test_pretty_semantic_error_duplicate_declaration() {
     let temp_dir = std::env::temp_dir().join("jmcc_pretty_test_dup");
-    let _ = fs::create_dir_all(&temp_dir);
+    drop(fs::create_dir_all(&temp_dir));
     let file_path = temp_dir.join("test_dup.jc");
     fs::write(&file_path, "function foo() {}\n\nfunction foo() {}\n").expect("write test file");
 
@@ -90,13 +90,13 @@ fn test_pretty_semantic_error_duplicate_declaration() {
     assert!(rendered.contains("function foo() {}"));
     assert!(rendered.contains("aborting due to") || rendered.contains("прервано из-за"));
 
-    let _ = fs::remove_file(file_path);
+    drop(fs::remove_file(file_path));
 }
 
 #[test]
 fn test_pretty_multiple_errors_rendering() {
     let temp_dir = std::env::temp_dir().join("jmcc_pretty_test_multi");
-    let _ = fs::create_dir_all(&temp_dir);
+    drop(fs::create_dir_all(&temp_dir));
     let file_path = temp_dir.join("test_multi.jc");
     fs::write(
         &file_path,
@@ -113,7 +113,7 @@ fn test_pretty_multiple_errors_rendering() {
     assert!(rendered.contains("break;"));
     assert!(rendered.contains("aborting due to") || rendered.contains("прервано из-за"));
 
-    let _ = fs::remove_file(file_path);
+    drop(fs::remove_file(file_path));
 }
 
 #[test]
@@ -196,7 +196,7 @@ fn test_pretty_diagnostic_render_warning_both_languages() {
 #[test]
 fn test_compile_file_with_russian_locale_flag() {
     let temp_dir = std::env::temp_dir().join("jmcc_pretty_test_ru_flag");
-    let _ = fs::create_dir_all(&temp_dir);
+    drop(fs::create_dir_all(&temp_dir));
     let file_path = temp_dir.join("test_ru.jc");
     fs::write(
         &file_path,
@@ -222,13 +222,13 @@ fn test_compile_file_with_russian_locale_flag() {
         "expected summary in Russian, got:\n{rendered}"
     );
 
-    let _ = fs::remove_file(file_path);
+    drop(fs::remove_file(file_path));
 }
 
 #[test]
 fn test_compile_file_with_english_locale_flag() {
     let temp_dir = std::env::temp_dir().join("jmcc_pretty_test_en_flag");
-    let _ = fs::create_dir_all(&temp_dir);
+    drop(fs::create_dir_all(&temp_dir));
     let file_path = temp_dir.join("test_en.jc");
     fs::write(
         &file_path,
@@ -254,7 +254,7 @@ fn test_compile_file_with_english_locale_flag() {
         "expected summary in English, got:\n{rendered}"
     );
 
-    let _ = fs::remove_file(file_path);
+    drop(fs::remove_file(file_path));
 }
 
 #[test]
@@ -274,7 +274,7 @@ fn test_manifest_locale_configuration() {
     let manifest = Manifest::from_str(toml_str, Path::new("jmcc.toml")).unwrap();
     assert_eq!(manifest.locale(), Some("ru".to_owned()));
 
-    let rel_profile = manifest.profile.get("release").unwrap();
+    let rel_profile = &manifest.profile["release"];
     assert_eq!(rel_profile.locale, Some("en".to_owned()));
 }
 
@@ -310,4 +310,40 @@ fn test_pretty_diagnostic_ice_parser_error_code() {
         "expected 'error[S0001]', got:\n{rendered}"
     );
     assert!(rendered.contains("internal parser error (ICE): unexpected lexer state"));
+}
+
+#[test]
+fn test_subscript_missing_getter_hint() {
+    let temp_dir = std::env::temp_dir().join("jmcc_test_subscript_missing_getter");
+    drop(fs::create_dir_all(&temp_dir));
+    let file_path = temp_dir.join("test_no_getter.jc");
+    fs::write(
+        &file_path,
+        r#"
+class Box {
+    var v: number;
+    function __subscript__(self: Box, idx: number) -> number {
+        return self.v + idx;
+    }
+}
+function main() {
+    var b = Box(10);
+    var x = b[0];
+}
+"#,
+    )
+    .unwrap();
+
+    let err = compile_file(&file_path, &test_options(2026, 2)).unwrap_err();
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("E0039"),
+        "expected error E0039, got: {err_str}"
+    );
+    assert!(
+        err_str.contains("__subscript__") && err_str.contains("@getter"),
+        "expected hint mentioning '@getter', got: {err_str}"
+    );
+
+    drop(fs::remove_file(file_path));
 }

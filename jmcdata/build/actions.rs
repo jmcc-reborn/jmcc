@@ -29,6 +29,18 @@ pub fn gen_struct_defs() -> TokenStream {
             pub boolean: bool,
             pub lambda: Option<&'static [ActionArg]>,
         }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct GameValueDef {
+            pub id: &'static str,
+            pub value_type: &'static str,
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct EventDef {
+            pub id: &'static str,
+            pub cancellable: bool,
+        }
     }
 }
 
@@ -97,7 +109,11 @@ pub fn gen_action_defs(actions: &[RawAction]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "static ACTION_DEFS: [ActionDef; {}] = [{defs}];\n\n",
+        "pub static ACTION_DEFS: [ActionDef; {}] = [{defs}];\n\n\
+         #[must_use]\n\
+         pub fn get_action_defs() -> &'static [ActionDef] {{\n    \
+             &ACTION_DEFS\n\
+         }}\n\n",
         actions.len()
     )
 }

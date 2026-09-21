@@ -28,6 +28,7 @@ RUST_LOG=warn cargo run -p jmcc -- compile jmcc/tests/nn.jc --emit json
 |---|---|
 | `<module.json>` | Compiled module emitted by `jmcc --emit json` |
 | `-e, --event <NAME>` | Event to trigger (repeatable, executes in specified order; defaults to `world_start`) |
+| `-s, --scenario <FILE>` | Run a declarative JSON scenario (multiplayer simulation, events, and assertions) |
 | `--chat <TEXT>` | Message payload for `event_chat_message` (`%event_chat_message%`) |
 | `--slot <N>` | Slot index for `event_slot` |
 | `-p, --player <NAME>` | Add player to mock world (repeatable) |
@@ -71,6 +72,49 @@ Action effects log per target frame:
 [0] player Dev: player_send_message Training started...
 [0] player Dev: player_send_message [[], 0.01]
 ```
+
+## Declarative Scenarios
+
+The mock runtime supports running multi-action and multi-player simulations loaded from a JSON file (`-s, --scenario <FILE>`). This enables testing interactions between multiple players, custom event payloads, virtual tick progression, and automated log assertions.
+
+```bash
+./target/debug/jmcmock module.json -s scenario.json
+```
+
+### Scenario File Format
+
+A scenario can be declared as a JSON object with metadata, or as a raw array of steps `[ { "type": "..." }, ... ]`:
+
+```json
+{
+  "name": "Multiplayer interaction test",
+  "description": "Alice chats, Bob joins, and inventory clicks are simulated",
+  "initial_players": ["Alice"],
+  "no_default_player": true,
+  "steps": [
+    { "type": "event", "event": "world_start" },
+    { "type": "event", "event": "player_join", "player": "Alice" },
+    { "type": "event", "event": "player_chat", "player": "Alice", "chat": "!start" },
+    { "type": "assert_log", "contains": "Game started" },
+    { "type": "add_player", "name": "Bob", "x": 10.0, "y": 64.0, "z": 20.0 },
+    { "type": "event", "event": "player_join", "player": "Bob" },
+    { "type": "wait", "ticks": 20 },
+    { "type": "assert_log", "contains": "Bob joined", "not_contains": "Error" }
+  ]
+}
+```
+
+### Supported Step Types
+
+| Step Type (`type`) | Fields | Description |
+|---|---|---|
+| `add_player` | `name`, `x`, `y`, `z` (optional) | Adds a player to the mock world at given coordinates |
+| `remove_player` | `name` | Removes a player from the mock world |
+| `event` | `event`, `player`, `chat`, `slot`, `title` | Triggers an event on behalf of a player or the world with arguments |
+| `call_function` | `name` | Directly invokes a function handler in the module |
+| `wait` | `ticks` (default: 1) | Advances virtual world clock by specified ticks |
+| `assert_log` | `contains`, `not_contains`, `exact` | Validates world log entries; fails with `AssertionFailed` on mismatch |
+| `clear_log` | — | Flushes recorded world log entries for clean assertions |
 
 ## Variable Scopes and Lifetimes
 

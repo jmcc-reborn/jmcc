@@ -323,6 +323,7 @@ impl ImportResolver {
             Statement::TypeAlias(alias) => Self::remap_type_alias(alias, src, dst),
             Statement::Function(f) => Statement::Function(FunctionDecl {
                 name: Self::map_str(dst, src, f.name),
+                generics: Self::map_strs(dst, src, &f.generics),
                 params: Self::remap_params(&f.params, src, dst, m),
                 return_type: f.return_type.map(|t| Self::map_str(dst, src, t)),
                 body: self.remap_body(&f.body, src, dst, m),
@@ -330,6 +331,7 @@ impl ImportResolver {
                 is_exported: f.is_exported,
                 is_getter: f.is_getter,
                 is_setter: f.is_setter,
+                is_overload: f.is_overload,
                 aliases: Self::map_strs(dst, src, &f.aliases),
                 test_attr: f.test_attr.clone(),
                 span: f.span.clone(),
@@ -414,6 +416,10 @@ impl ImportResolver {
             Statement::Break(b) => Statement::Break(BreakStmt {
                 label: b.label.map(|l| Self::map_str(dst, src, l)),
                 span: b.span.clone(),
+            }),
+            Statement::Continue(c) => Statement::Continue(ContinueStmt {
+                label: c.label.map(|l| Self::map_str(dst, src, l)),
+                span: c.span.clone(),
             }),
             Statement::VarDecl(d) => Statement::VarDecl(VarDecl {
                 scopes: d.scopes.clone(),

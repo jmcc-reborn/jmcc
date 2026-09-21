@@ -12,16 +12,17 @@ fn check_idempotent(source: &str, edition: u16, path_str: &str) -> String {
     let ast2 = jmcc::ast::parser::parse_string(&formatted1, path_str, edition, 0)
         .unwrap_or_else(|e| {
             let err_str = format!("{e:?}");
-            let snippet = if let Some(idx) = err_str.find("..").and_then(|pos| {
-                let start_num = err_str[..pos].rsplit(|c: char| !c.is_ascii_digit()).next()?;
-                start_num.parse::<usize>().ok()
-            }) {
-                let start = idx.saturating_sub(100);
-                let end = (idx + 100).min(formatted1.len());
-                &formatted1[start..end]
-            } else {
-                "unable to extract range"
-            };
+            let snippet = err_str
+                .find("..")
+                .and_then(|pos| {
+                    let start_num = err_str[..pos].rsplit(|c: char| !c.is_ascii_digit()).next()?;
+                    start_num.parse::<usize>().ok()
+                })
+                .map_or("unable to extract range", |idx| {
+                    let start = idx.saturating_sub(100);
+                    let end = (idx + 100).min(formatted1.len());
+                    &formatted1[start..end]
+                });
             panic!("Failed to parse formatted source (round 1) of {path_str}: {e:?}\nSnippet around error:\n>>>\n{snippet}\n<<<\n");
         });
     let formatted2 = jmcc::ast::format::format(&ast2, &formatted1);
@@ -252,7 +253,7 @@ fn test_format_all_fixtures() {
                 2026
             };
             let path_str = path.display().to_string();
-            let _ = check_idempotent(&src, edition, &path_str);
+            drop(check_idempotent(&src, edition, &path_str));
             tested += 1;
         }
     }
@@ -272,12 +273,12 @@ fn test_format_matrix() {
     match jmcc::ast::parser::parse_string(&formatted, "matrix.jc", 2026, 0) {
         Ok(_) => {}
         Err(e) => {
-            eprintln!("Parse error: {:?}", e);
-            let lines: Vec<&str> = formatted.lines().collect();
-            for (idx, line) in lines.iter().enumerate() {
-                eprintln!("{:4}: {}", idx + 1, line);
-            }
-            panic!("Failed to parse formatted matrix: {:?}", e);
+            let formatted_lines: String = formatted
+                .lines()
+                .enumerate()
+                .map(|(idx, line)| format!("{:4}: {line}\n", idx + 1))
+                .collect();
+            panic!("Failed to parse formatted matrix: {e:?}\n{formatted_lines}");
         }
     }
 }
@@ -297,7 +298,7 @@ fn test_format_all_std() {
                 2026
             };
             let path_str = path.display().to_string();
-            let _ = check_idempotent(&src, edition, &path_str);
+            drop(check_idempotent(&src, edition, &path_str));
             tested += 1;
         }
     }
@@ -320,7 +321,7 @@ fn test_format_all_examples() {
         if path.extension().is_some_and(|ext| ext == "jc") {
             let src = fs::read_to_string(path).expect("failed to read example file");
             let path_str = path.display().to_string();
-            let _ = check_idempotent(&src, 2026, &path_str);
+            drop(check_idempotent(&src, 2026, &path_str));
             tested += 1;
         }
     }

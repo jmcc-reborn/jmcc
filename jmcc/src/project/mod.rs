@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(manifest.version(), "0.2.0");
         assert_eq!(manifest.edition(), 2026);
         assert!(manifest.dependencies.contains_key("math"));
-        let rel_profile = manifest.profile.get("release").unwrap();
+        let rel_profile = &manifest.profile["release"];
         assert_eq!(rel_profile.opt_level, Some(3));
     }
 
@@ -311,7 +311,7 @@ mod tests {
             net = { git = "https://github.com/example/net.git", branch = "main" }
         "#;
         let manifest = Manifest::from_str(toml_str, Path::new("jmcc.toml")).unwrap();
-        let net_dep = manifest.dependencies.get("net").unwrap();
+        let net_dep = &manifest.dependencies["net"];
         assert_eq!(net_dep.git(), Some("https://github.com/example/net.git"));
     }
 
@@ -353,7 +353,7 @@ mod tests {
 
         assert_eq!(member_manifest.version(), "2.5.0");
         assert_eq!(member_manifest.edition(), 2026);
-        let common = member_manifest.dependencies.get("common").unwrap();
+        let common = &member_manifest.dependencies["common"];
         assert_eq!(common.path(), Some(Path::new("../common")));
     }
 }

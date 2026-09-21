@@ -28,6 +28,7 @@ pub enum Token<'a> {
     Line,
     Jmcc,
     Break,
+    Continue,
     Ref,
     If,
     Else,
@@ -441,7 +442,7 @@ impl<'a> LexerWrapper<'a> {
                     let ident = &remainder[..end_ident];
                     let rest = &remainder[end_ident..];
 
-                    if matches!(self.last_token, Some(Token::Break)) {
+                    if matches!(self.last_token, Some(Token::Break | Token::Continue)) {
                         self.lexer.bump(end_ident);
                         self.last_end = span.start + 1 + end_ident;
                         let tok = Token::Label(ident);

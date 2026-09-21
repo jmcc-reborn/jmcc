@@ -146,11 +146,24 @@ impl HirBuilder<'_> {
 
         let node = match bin_op_to_hir(bin.op, l, r) {
             BinOpHir::Node(node) => node,
-            BinOpHir::In => return Err(IrError::UnsupportedIn),
             BinOpHir::Range | BinOpHir::RangeInclusive => {
                 let one = self.add(Hir::Num(OrderedFloat(1.0)));
                 let list = self.add(Hir::List(vec![l, r, l, one].into_boxed_slice()));
-                return Ok(self.wrap_lets(list, b));
+                let name = self.fresh();
+                let var_raw = self.add(Hir::Var(VarName(name)));
+                let var = self.wrap_scope(var_raw, self.default_scope);
+                let class_name = if bin.op == BinOp::Range {
+                    "Range"
+                } else {
+                    "RangeInclusive"
+                };
+                let ty = Type::Class(
+                    self.ir_ctx.lang_items.get(class_name).copied().unwrap_or(0),
+                    vec![],
+                );
+                self.ir_ctx.record_var_type(name, ty);
+                b.push((var, list));
+                return Ok(self.wrap_lets(var, b));
             }
             BinOpHir::Assign => {
                 let set = self.add(Hir::Set([l, r]));

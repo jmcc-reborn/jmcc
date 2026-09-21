@@ -13,7 +13,17 @@ impl Analyzer<'_> {
         eid: ExprId,
     ) -> Option<&'static jmcdata::generated::ActionDef> {
         let (object, name) = match &self.ast.exprs[eid] {
-            Expr::Action(a) => (self.str(a.object), self.str(a.name)),
+            Expr::Action(a) => {
+                let object = self.str(a.object);
+                let name = self.str(a.name);
+                if let Some(class) = self.get_class(&object)
+                    && (self.class_has_method(class.def_id, &name)
+                        || class.processes.contains_key(&name))
+                {
+                    return None;
+                }
+                (object, name)
+            }
             Expr::Call(c) => {
                 let method = self.str(c.method);
                 match &self.ast.exprs[c.target] {
@@ -23,11 +33,16 @@ impl Analyzer<'_> {
                         if method == target {
                             return None;
                         }
-                        if KNOWN_OBJECTS.contains(&target.as_str()) {
+                        let is_var = matches!(
+                            self.lookup(&target),
+                            Some(Symbol::Var { .. } | Symbol::Param { .. })
+                        );
+                        if !is_var && KNOWN_OBJECTS.contains(&target.as_str()) {
                             return jmcdata::generated::get_action_def(&target, &method);
                         }
                         if let Some(class) = self.get_class(&target)
-                            && self.class_has_method(class.def_id, &method)
+                            && (self.class_has_method(class.def_id, &method)
+                                || class.processes.contains_key(&method))
                         {
                             return None;
                         }
@@ -240,6 +255,10 @@ impl Analyzer<'_> {
         ))
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "named call dispatch with methods, functions, and overloads"
+    )]
     fn analyze_named_call(
         &mut self,
         call: &CallExpr,
@@ -256,12 +275,40 @@ impl Analyzer<'_> {
         // Module mangling rewrites the target to a full name and sets the method to `"call"`,
         // which is still a direct call.
         let is_direct_call = method == target || method == "call";
-        match self.lookup(target) {
+        let func_sym = self.lookup(target);
+        match func_sym {
             Some(Symbol::Func {
                 params,
                 return_type,
+                overloads,
                 ..
             }) if is_direct_call => {
+                let mut matched_return = None;
+                if !overloads.is_empty() {
+                    for (ov_params, ov_ret) in &overloads {
+                        if self.func_args_match(ov_params, &call.args, arg_types) {
+                            matched_return = Some(ov_ret.clone());
+                            break;
+                        }
+                    }
+                    if matched_return.is_none()
+                        && self.func_args_match(&params, &call.args, arg_types)
+                    {
+                        matched_return = Some(return_type.clone());
+                    }
+                }
+                if let Some(ret) = matched_return {
+                    if ret.is_none() && !is_statement {
+                        self.error(
+                            SemanticErrorKind::VoidReturnValueUsed {
+                                name: target.to_owned(),
+                            },
+                            call.span.clone(),
+                        );
+                    }
+                    return Some(ret.unwrap_or(Type::Unknown));
+                }
+
                 self.check_func_args(&params, &call.args, arg_types, &call.span, target);
                 if return_type.is_none() && !is_statement {
                     self.error(
@@ -292,7 +339,11 @@ impl Analyzer<'_> {
             self.check_constructor_call(call, arg_types, target, &class);
             return Some(Type::Class(class.def_id, vec![]));
         }
-        if KNOWN_OBJECTS.contains(&target) {
+        let is_target_var = matches!(
+            self.lookup(target),
+            Some(Symbol::Var { .. } | Symbol::Param { .. })
+        );
+        if !is_target_var && KNOWN_OBJECTS.contains(&target) {
             if jmcdata::generated::get_action_def(target, method).is_some() {
                 self.lint_raw_action(target, method, &call.span);
                 return Some(self.check_action_args(
@@ -345,11 +396,41 @@ impl Analyzer<'_> {
             self.check_constructor_call(call, arg_types, target, &class);
             return Some(Type::Class(class.def_id, vec![]));
         }
-        let function = class.methods.get(method)?.clone();
-        let subst = self.infer_class_method_subst(call.args.first().map(|arg| arg.value), &class);
-        let params = self.method_params(&class, &function.params, &subst);
-        self.check_func_args(&params, &call.args, arg_types, &call.span, target);
-        Some(self.callable_return_type(function.return_type, &class, &subst, &call.span))
+        if let Some(function) = class.methods.get(method).cloned() {
+            let subst =
+                self.infer_class_method_subst(call.args.first().map(|arg| arg.value), &class);
+            let params = self.method_params(&class, &function.params, &subst);
+            self.check_func_args(&params, &call.args, arg_types, &call.span, target);
+            if function.return_type.is_none() && !is_statement {
+                self.error(
+                    SemanticErrorKind::VoidReturnValueUsed {
+                        name: format!("{target}.{method}"),
+                    },
+                    call.span.clone(),
+                );
+            }
+            return Some(self.callable_return_type(
+                function.return_type,
+                &class,
+                &subst,
+                &call.span,
+            ));
+        }
+        if let Some(process) = class.processes.get(method).cloned() {
+            let params = self.method_params(&class, &process.params, &HashMap::new());
+            self.check_func_args(&params, &call.args, arg_types, &call.span, target);
+            if !is_statement {
+                self.error(
+                    SemanticErrorKind::ProcessReturnValueUsed {
+                        name: format!("{target}.{method}"),
+                    },
+                    call.span.clone(),
+                );
+                return Some(Type::Unknown);
+            }
+            return Some(Type::Never);
+        }
+        None
     }
 
     fn check_constructor_call(
@@ -541,15 +622,23 @@ impl Analyzer<'_> {
         subst: &HashMap<StrId, Type>,
     ) {
         let params = self.method_params(class, raw_params, subst);
-        let mut args = vec![ArgExpr {
-            name: None,
-            value: call.target,
-            spread: 0,
-            is_ref: raw_params.first().is_some_and(|param| param.is_ref),
-        }];
-        args.extend(call.args.iter().cloned());
-        let mut types = vec![target_type.clone()];
-        types.extend(arg_types.iter().cloned());
+        let has_self = raw_params
+            .first()
+            .is_some_and(|param| crate::utils::is_self_param(self.str(param.name).as_str()));
+        let (args, types) = if has_self {
+            let mut args = vec![ArgExpr {
+                name: None,
+                value: call.target,
+                spread: 0,
+                is_ref: raw_params.first().is_some_and(|param| param.is_ref),
+            }];
+            args.extend(call.args.iter().cloned());
+            let mut types = vec![target_type.clone()];
+            types.extend(arg_types.iter().cloned());
+            (args, types)
+        } else {
+            (call.args.clone(), arg_types.to_vec())
+        };
         self.check_func_args(&params, &args, &types, &call.span, &class.name);
     }
 
@@ -643,6 +732,69 @@ impl Analyzer<'_> {
                 }
             }
         }
+    }
+
+    fn func_args_match(
+        &mut self,
+        params: &[ParamInfo],
+        args: &[ArgExpr],
+        arg_types: &[Type],
+    ) -> bool {
+        let has_args_spread = params.iter().any(|p| p.spread == 1);
+        let has_kwargs_spread = params.iter().any(|p| p.spread == 2);
+        let normal_params: Vec<&ParamInfo> = params.iter().filter(|p| p.spread == 0).collect();
+        let mut positional_idx = 0;
+        let mut provided_names = HashSet::new();
+
+        for (arg, arg_ty) in args.iter().zip(arg_types.iter()) {
+            if let Some(arg_name_id) = arg.name {
+                let arg_name_str = self.str(arg_name_id);
+                provided_names.insert(arg_name_str.clone());
+                if let Some(p) = params.iter().find(|p| p.name == arg_name_str) {
+                    let actual_res = self.unifier.find(arg_ty);
+                    let expected_res = self.unifier.find(&p.ty);
+                    if !self.is_assignable_to(&actual_res, &expected_res)
+                        && actual_res != Type::Unknown
+                        && expected_res != Type::Unknown
+                    {
+                        return false;
+                    }
+                } else if !has_kwargs_spread {
+                    return false;
+                }
+            } else if positional_idx < normal_params.len() {
+                let p = normal_params[positional_idx];
+                provided_names.insert(p.name.clone());
+                let actual_res = self.unifier.find(arg_ty);
+                let expected_res = self.unifier.find(&p.ty);
+                if !self.is_assignable_to(&actual_res, &expected_res)
+                    && actual_res != Type::Unknown
+                    && expected_res != Type::Unknown
+                {
+                    return false;
+                }
+                positional_idx += 1;
+            } else if !has_args_spread {
+                return false;
+            }
+        }
+
+        for p in params {
+            if p.spread != 0 {
+                continue;
+            }
+            if !p.has_default && !provided_names.contains(p.name.as_str()) {
+                let was_positional = normal_params
+                    .iter()
+                    .take(positional_idx)
+                    .any(|np| np.name == p.name);
+                if !was_positional {
+                    return false;
+                }
+            }
+        }
+
+        true
     }
 
     #[instrument(skip(self, c), level = "trace")]

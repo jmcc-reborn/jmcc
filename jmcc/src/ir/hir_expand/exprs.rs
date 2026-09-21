@@ -89,10 +89,23 @@ impl OverloadExpander<'_> {
         let node = match bin_op_to_hir(binary.op, left, right) {
             BinOpHir::Node(node) => node,
             BinOpHir::Assign => Hir::Set([left, right]),
-            BinOpHir::In => return Err(OverloadError::UnsupportedBinaryOp(binary.op)),
             BinOpHir::Range | BinOpHir::RangeInclusive => {
                 let one = self.add(Hir::Num(1.0.into()));
-                Hir::List(vec![left, right, left, one].into_boxed_slice())
+                let list = self.add(Hir::List(vec![left, right, left, one].into_boxed_slice()));
+                let name = self.fresh();
+                let var_raw = self.add(Hir::Var(VarName(name)));
+                let var = self.add(Hir::Line(var_raw));
+                let class_name = if binary.op == BinOp::Range {
+                    "Range"
+                } else {
+                    "RangeInclusive"
+                };
+                let ty = Type::Class(
+                    self.ctx.lang_items.get(class_name).copied().unwrap_or(0),
+                    vec![],
+                );
+                self.ctx.record_var_type(name, ty);
+                return Ok(self.add(Hir::Let([var, list, var])));
             }
         };
         Ok(self.add(node))
@@ -115,6 +128,20 @@ impl OverloadExpander<'_> {
         let name = self.add(Hir::Str(StrLit(self.sym(c.name))));
         let args = self.conv_ast_args(&c.args)?;
         Ok(self.add(Hir::Ctor(vec![name, args].into_boxed_slice())))
+    }
+
+    fn target_ty(&self, eid: ExprId) -> Type {
+        let ty = self.types.get(&eid).cloned().unwrap_or(Type::Unknown);
+        if !matches!(ty, Type::Unknown | Type::InferVar(_)) {
+            return ty;
+        }
+        if let Expr::Ident(name_id, _) = &self.ast.exprs[eid] {
+            let sym = self.sym(*name_id);
+            if let Some(actual_ty) = self.ctx.var_types.get(&sym).cloned() {
+                return actual_ty;
+            }
+        }
+        ty
     }
 
     /// Property access: enum variant, class getter, field slot, or dict.
@@ -141,7 +168,7 @@ impl OverloadExpander<'_> {
             }
         }
 
-        let target_ty = self.types.get(&p.object).cloned().unwrap_or(Type::Unknown);
+        let target_ty = self.target_ty(p.object);
 
         let getter = self.find_in_classes(&target_ty, |class| {
             class.getters.get(prop_name.as_str()).cloned()
@@ -149,6 +176,17 @@ impl OverloadExpander<'_> {
         if let Some(getter) = getter {
             let target = self.conv_ast_expr(p.object)?;
             return self.expand_inline_from_hir(&getter, vec![target]);
+        }
+
+        let is_single = self.ctx.is_single_field_type(&target_ty);
+        if is_single
+            && self
+                .find_in_classes(&target_ty, |class| {
+                    class.fields.contains_key(prop_name.as_str()).then_some(())
+                })
+                .is_some()
+        {
+            return self.conv_ast_expr(p.object);
         }
 
         let slot = self.find_in_classes(&target_ty, |class| {
@@ -185,7 +223,7 @@ impl OverloadExpander<'_> {
         val: Id,
     ) -> Result<Option<Id>> {
         let prop_name = self.sym(p.property);
-        let target_ty = self.types.get(&p.object).cloned().unwrap_or(Type::Unknown);
+        let target_ty = self.target_ty(p.object);
 
         let setter = self.find_in_classes(&target_ty, |class| {
             class.setters.get(prop_name.as_str()).cloned()
@@ -198,6 +236,18 @@ impl OverloadExpander<'_> {
             } else {
                 result
             }));
+        }
+
+        let is_single = self.ctx.is_single_field_type(&target_ty);
+        if is_single
+            && self
+                .find_in_classes(&target_ty, |class| {
+                    class.fields.contains_key(prop_name.as_str()).then_some(())
+                })
+                .is_some()
+        {
+            let target = self.conv_ast_expr(p.object)?;
+            return Ok(Some(self.add(Hir::Set([target, val]))));
         }
 
         let slot = self.find_in_classes(&target_ty, |class| {

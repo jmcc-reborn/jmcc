@@ -32,7 +32,11 @@ pub fn dispatch<'a>(rt: &mut Runtime<'a>, stream: &mut Stream<'a>, op: &'a Op<'a
             })
         }
         ActionId::StartProcess => start_process(rt, stream, op),
-        ActionId::ControlDummy | ActionId::ControllerDoNotRun => Ok(Flow::Continue),
+        ActionId::ControlDummy
+        | ActionId::ControllerDoNotRun
+        | ActionId::ControllerAsyncRun
+        | ActionId::ControllerLabel
+        | ActionId::ControllerIsolatedSelection => Ok(Flow::Continue),
         _other => rt.unimplemented_op(stream, op),
     }
 }

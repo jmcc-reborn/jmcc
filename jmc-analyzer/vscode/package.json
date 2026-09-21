@@ -2,7 +2,7 @@
   "name": "justcode-lang",
   "displayName": "JustCode for JustMC (JMCC)",
   "description": "Full Language Server (diagnostics, IntelliSense, definitions, hover, rename, semantic tokens) and syntax highlighting for JustCode (.jc)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "jmcc",
   "icon": "media/logo.png",
   "engines": {

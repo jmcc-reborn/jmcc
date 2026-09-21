@@ -204,6 +204,7 @@ pub(super) fn variables<'a>(
             "GAME" => VariableScope::Global,
             "LOCAL" => VariableScope::Local,
             "SAVE" => VariableScope::Save,
+            "LINE" => VariableScope::Line,
             other => return Err(invalid_enum(args, "scope", other.to_owned())),
         };
         let names = rt

@@ -365,7 +365,10 @@ pub fn detect_code_language(source: &str) -> Option<Lang> {
 }
 
 /// Recursively walks all statements in a hierarchy, invoking `cb` for each statement.
-pub fn walk_statements(stmts: &[jmcc::ast::Statement], cb: &mut impl FnMut(&jmcc::ast::Statement)) {
+pub fn walk_statements<'a>(
+    stmts: &'a [jmcc::ast::Statement],
+    cb: &mut impl FnMut(&'a jmcc::ast::Statement),
+) {
     for stmt in stmts {
         cb(stmt);
         match stmt {
@@ -488,5 +491,175 @@ pub fn format_type(ty: &Type, ir_ctx: Option<&IrCtx>, lang: Lang) -> String {
                 "never".to_owned()
             }
         }
+    }
+}
+
+/// Extracts the import path string from a line of code if it is an import statement.
+#[must_use]
+pub fn extract_import_path(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let is_import = trimmed.starts_with("import")
+        || trimmed.starts_with("импорт")
+        || trimmed.starts_with("export import")
+        || trimmed.starts_with("экспорт импорт");
+
+    if !is_import {
+        return None;
+    }
+
+    // 1. Check for quoted path: "...", '...', `...`
+    if let Some(first_quote) = trimmed.find(['"', '\'', '`'])
+        && let Some(last_quote) = trimmed.rfind(['"', '\'', '`'])
+        && first_quote < last_quote
+    {
+        let path = &trimmed[first_quote + 1..last_quote];
+        return Some(path.trim().to_owned());
+    }
+
+    // 2. Check for unquoted import: import std::math::core; or импорт math::core;
+    let after_kw = trimmed
+        .strip_prefix("export import")
+        .or_else(|| trimmed.strip_prefix("экспорт импорт"))
+        .or_else(|| trimmed.strip_prefix("import"))
+        .or_else(|| trimmed.strip_prefix("импорт"))?;
+
+    let cleaned = after_kw.trim().trim_end_matches(';').trim();
+
+    if !cleaned.is_empty()
+        && cleaned
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == ':' || c == '/' || c == '.')
+    {
+        let path = cleaned.replace("::", "/");
+        return Some(path);
+    }
+
+    None
+}
+
+/// Resolves an import path string to an existing file path.
+#[must_use]
+pub fn resolve_import_to_file(
+    doc_path: &Path,
+    import_path: &str,
+    ast: Option<&Ast>,
+    custom_std: Option<&Path>,
+) -> Option<PathBuf> {
+    let clean_path = import_path.trim().replace('\\', "/");
+    let norm_path = clean_path.strip_suffix(".jc").unwrap_or(&clean_path);
+
+    // 1. Direct relative path from current document's directory
+    if let Some(parent) = doc_path.parent() {
+        let cand1 = parent.join(&clean_path);
+        if cand1.is_file() {
+            return Some(cand1);
+        }
+        let cand2 = parent.join(format!("{norm_path}.jc"));
+        if cand2.is_file() {
+            return Some(cand2);
+        }
+    }
+
+    // 2. Search in Ast sources
+    if let Some(ast) = ast {
+        for src_path in ast.sources.keys() {
+            let src_str = src_path.to_string_lossy().replace('\\', "/");
+            let src_norm = src_str.strip_suffix(".jc").unwrap_or(&src_str);
+
+            if (src_norm.ends_with(norm_path)
+                || src_str.ends_with(&clean_path)
+                || src_norm.ends_with(&format!("/{norm_path}")))
+                && src_path.is_file()
+            {
+                return Some(src_path.clone());
+            }
+        }
+    }
+
+    // 3. Search in custom_std or standard library paths (only for explicit std imports)
+    let is_std_import =
+        clean_path.starts_with("std/") || clean_path == "std" || import_path.starts_with("std::");
+
+    if is_std_import {
+        let mut std_candidates = Vec::new();
+        if let Some(std_dir) = custom_std {
+            std_candidates.push(std_dir.to_path_buf());
+            std_candidates.push(std_dir.join("std"));
+        }
+        if let Ok(val) = std::env::var("JMCC_STD_PATH") {
+            let p = PathBuf::from(val);
+            std_candidates.push(p.clone());
+            std_candidates.push(p.join("std"));
+        }
+
+        for ancestor in doc_path.ancestors() {
+            std_candidates.push(ancestor.join("std"));
+            std_candidates.push(ancestor.join("jmcc").join("std"));
+        }
+
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let p = PathBuf::from(manifest_dir);
+            if let Some(parent) = p.parent() {
+                std_candidates.push(parent.join("jmcc").join("std"));
+            }
+        }
+
+        let std_norm = norm_path.strip_prefix("std/").unwrap_or(norm_path);
+        let std_clean = clean_path.strip_prefix("std/").unwrap_or(&clean_path);
+
+        let search_subpaths = [
+            format!("{std_norm}.jc"),
+            std_clean.to_string(),
+            format!("{std_norm}/mod.jc"),
+            format!("primitives/code/{std_norm}.jc"),
+        ];
+
+        for std_base in std_candidates {
+            if !std_base.is_dir() {
+                continue;
+            }
+            for sub in &search_subpaths {
+                let p = std_base.join(sub);
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Extracts the identifier word at the specified byte offset in text.
+#[must_use]
+pub fn get_word_at_offset(text: &str, offset: usize) -> Option<&str> {
+    if offset > text.len() {
+        return None;
+    }
+
+    let mut safe_offset = offset;
+    while safe_offset > 0 && !text.is_char_boundary(safe_offset) {
+        safe_offset -= 1;
+    }
+
+    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_';
+
+    let start = text[..safe_offset]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_ident_char(*c))
+        .last()
+        .map_or(safe_offset, |(idx, _)| idx);
+
+    let end = text[safe_offset..]
+        .char_indices()
+        .take_while(|(_, c)| is_ident_char(*c))
+        .last()
+        .map_or(safe_offset, |(idx, c)| safe_offset + idx + c.len_utf8());
+
+    if start < end {
+        Some(&text[start..end])
+    } else {
+        None
     }
 }

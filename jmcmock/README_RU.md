@@ -32,6 +32,7 @@ RUST_LOG=warn cargo run -p jmcc -- compile jmcc/tests/nn.jc --emit json
 |---|---|
 | `<module.json>` | модуль, который выдал `jmcc --emit json` |
 | `-e, --event <NAME>` | какое событие разыграть; ключ можно повторить, события выполняются в заданном порядке. Без ключа разыгрывается `world_start` |
+| `-s, --scenario <FILE>` | запустить декларативный JSON-сценарий (симуляция игроков, событий и проверок) |
 | `--chat <TEXT>` | текст события `event_chat_message` (`%event_chat_message%`) |
 | `--slot <N>` | номер слота события `event_slot` |
 | `-p, --player <NAME>` | добавить игрока в мок-мир; ключ можно повторить |
@@ -108,6 +109,49 @@ RUST_LOG=warn cargo run -p jmcc -- compile jmcc/tests/nn.jc --emit json
 
 Журнал ограничен 100 000 записями; о переполнении мок сообщает в стандартный
 вывод ошибок, а не молчит.
+
+## Декларативные сценарии
+
+Мок поддерживает запуск многопользовательских сценариев и сложных цепочек действий из JSON-файла (`-s, --scenario <FILE>`). Это позволяет моделировать действия нескольких игроков, события с кастомными аргументами, продвижение игрового времени и валидацию журнала.
+
+```bash
+./target/debug/jmcmock module.json -s scenario.json
+```
+
+### Формат файла сценария
+
+Файл может быть объектом с метаданными либо плоским массивом шагов `[ { "type": "..." }, ... ]`:
+
+```json
+{
+  "name": "Тест многопользовательского взаимодействия",
+  "description": "Игрок Alice пишет в чат, заходит Bob и кликает в инвентаре",
+  "initial_players": ["Alice"],
+  "no_default_player": true,
+  "steps": [
+    { "type": "event", "event": "world_start" },
+    { "type": "event", "event": "player_join", "player": "Alice" },
+    { "type": "event", "event": "player_chat", "player": "Alice", "chat": "!start" },
+    { "type": "assert_log", "contains": "Игра началась" },
+    { "type": "add_player", "name": "Bob", "x": 10.0, "y": 64.0, "z": 20.0 },
+    { "type": "event", "event": "player_join", "player": "Bob" },
+    { "type": "wait", "ticks": 20 },
+    { "type": "assert_log", "contains": "Bob присоединился", "not_contains": "Ошибка" }
+  ]
+}
+```
+
+### Доступные типы шагов
+
+| Тип шага (`type`) | Поля | Описание |
+|---|---|---|
+| `add_player` | `name`, `x`, `y`, `z` (опционально) | Добавляет нового игрока с координатами в мир |
+| `remove_player` | `name` | Удаляет игрока из мира |
+| `event` | `event`, `player`, `chat`, `slot`, `title` | Вызывает событие от лица игрока или мира |
+| `call_function` | `name` | Прямой вызов функции модуля |
+| `wait` | `ticks` (по умолчанию 1) | Продвигает виртуальное время мира на заданное количество тиков |
+| `assert_log` | `contains`, `not_contains`, `exact` | Проверяет записи журнала; при несовпадении выбрасывает `AssertionFailed` |
+| `clear_log` | — | Очищает журнал мира для изоляции последующих проверок |
 
 ## Переменные
 

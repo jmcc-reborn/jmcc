@@ -86,7 +86,7 @@ impl HirBuilder<'_> {
 
     #[instrument(skip(self, f), level = "trace")]
     pub(super) fn conv_function(&mut self, f: &FunctionDecl) -> Result<Id, IrError> {
-        if f.is_inline {
+        if f.is_inline || f.is_overload || f.body.is_empty() {
             return Ok(self.nop());
         }
         let fn_sym = self.sym(f.name);
@@ -121,9 +121,14 @@ impl HirBuilder<'_> {
             if let Some(info) = &class_info
                 && i == 0
             {
+                let is_single = self.ir_ctx.is_single_field_class(info);
                 let slots_len = info.fields.len();
                 let zero = self.add(Hir::Num(0.0.into()));
-                let list = self.add(Hir::List(vec![zero; slots_len].into_boxed_slice()));
+                let list = if is_single {
+                    zero
+                } else {
+                    self.add(Hir::List(vec![zero; slots_len].into_boxed_slice()))
+                };
 
                 let lhs_raw = self.add(Hir::Var(VarName(sym)));
                 let lhs = self.wrap_scope(lhs_raw, scope);

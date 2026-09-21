@@ -4,6 +4,10 @@
 use super::*;
 
 impl Analyzer<'_> {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Dispatches action resolution across schema, class methods, and processes"
+    )]
     #[instrument(skip(self, a), level = "trace")]
     pub(super) fn analyze_action(&mut self, a: &ActionExpr) -> Type {
         let object = self.str(a.object);
@@ -73,19 +77,48 @@ impl Analyzer<'_> {
             return ret_ty;
         }
 
-        if let Some(class) = self.get_class(&object).cloned()
-            && let Some(method) = class.methods.get(&name).cloned()
-        {
-            let subst = self.infer_class_method_subst(a.args.first().map(|arg| arg.value), &class);
-            let params = self.method_params(&class, &method.params, &subst);
-            let arg_types = a
-                .args
-                .iter()
-                .map(|arg| self.analyze_expr(arg.value))
-                .collect::<Vec<_>>();
-            self.check_func_args(&params, &a.args, &arg_types, &a.span, &object);
-            self.analyze_action_body(a, &name, None, &arg_types);
-            return self.callable_return_type(method.return_type, &class, &subst, &a.span);
+        if let Some(class) = self.get_class(&object).cloned() {
+            if let Some(method) = class.methods.get(&name).cloned() {
+                let subst =
+                    self.infer_class_method_subst(a.args.first().map(|arg| arg.value), &class);
+                let params = self.method_params(&class, &method.params, &subst);
+                let arg_types = a
+                    .args
+                    .iter()
+                    .map(|arg| self.analyze_expr(arg.value))
+                    .collect::<Vec<_>>();
+                self.check_func_args(&params, &a.args, &arg_types, &a.span, &object);
+                self.analyze_action_body(a, &name, None, &arg_types);
+                if method.return_type.is_none() && !is_statement {
+                    self.error(
+                        SemanticErrorKind::VoidReturnValueUsed {
+                            name: format!("{object}::{name}"),
+                        },
+                        a.span.clone(),
+                    );
+                }
+                return self.callable_return_type(method.return_type, &class, &subst, &a.span);
+            }
+            if let Some(process) = class.processes.get(&name).cloned() {
+                let arg_types = a
+                    .args
+                    .iter()
+                    .map(|arg| self.analyze_expr(arg.value))
+                    .collect::<Vec<_>>();
+                let params = self.method_params(&class, &process.params, &HashMap::new());
+                self.check_func_args(&params, &a.args, &arg_types, &a.span, &object);
+                self.analyze_action_body(a, &name, None, &arg_types);
+                if !is_statement {
+                    self.error(
+                        SemanticErrorKind::ProcessReturnValueUsed {
+                            name: format!("{object}::{name}"),
+                        },
+                        a.span.clone(),
+                    );
+                    return Type::Unknown;
+                }
+                return Type::Never;
+            }
         }
 
         let suggestion = crate::utils::suggest_action(&object, &name)

@@ -410,12 +410,15 @@ give_bonus(my_coins, 50);
 Frequent helpers can be inlined directly at call sites to avoid subroutine overhead:
 
 ```jc
-inline function clamp(val: number, min: number, max: number) -> number {
-    if val < min { return min; }
-    if val > max { return max; }
+inline function clamp(val: number, min_val: number, max_val: number) -> number {
+    if val < min_val { return min_val; }
+    if val > max_val { return max_val; }
     return val;
 }
 ```
+
+> [!NOTE]
+> Standard library math functions `max` and `min` accept a list of numbers (e.g., `max([3, 9])`), or can be invoked as a method on a number (e.g., `3.max([9])`).
 
 ### 7.3. Lambdas and Functional Programming
 Lambda expressions allow passing behavior as values:
@@ -555,14 +558,14 @@ event<player_damage_player> {
     player::play_sound<damager>(sound("entity.experience_orb.pickup"));
 
     // Global alert
-    player::action_bar<all_players>("Combat in progress!");
+    player::send_action_bar<all_players>("Combat in progress!");
 }
 ```
 
 ### 9.3. Reading Game Values (`value::...`)
 Dynamic game values retrieve runtime state:
 ```jc
-var my_health = value::health<current>;
+var my_health = value::current_health<current>;
 var my_coords = value::location<current>;
 var online_count = value::player_count;
 ```
@@ -573,7 +576,7 @@ Processes are background asynchronous tasks with delay support (`code::wait`):
 ```jc
 process match_countdown(seconds: number) {
     while seconds > 0 {
-        player::title<all_players>(
+        player::send_title<all_players>(
             m"<gold>${seconds}</gold>", 
             subtitle = "Starting soon", 
             fade_in = 0, stay = 20, fade_out = 0
@@ -582,7 +585,7 @@ process match_countdown(seconds: number) {
         seconds -= 1;
     }
 
-    player::title<all_players>(m"<green>START!</green>");
+    player::send_title<all_players>(m"<green>START!</green>");
     game::is_match_running = true;
 }
 
@@ -696,12 +699,12 @@ process health_regen_loop() {
         code::wait(3, time_unit = "SECONDS");
 
         for target in value::all_players {
-            var current_hp = value::health<target>;
+            var current_hp = value::current_health<target>;
             var max_hp = value::max_health<target>;
 
             if current_hp < max_hp {
                 player::set_health<target>(current_hp + 1);
-                player::action_bar<target>(m"<green>+1 Health (Regeneration)</green>");
+                player::send_action_bar<target>(m"<green>+1 Health (Regeneration)</green>");
             }
         }
     }

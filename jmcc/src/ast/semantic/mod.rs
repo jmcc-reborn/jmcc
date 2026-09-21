@@ -224,6 +224,8 @@ pub enum Symbol {
         params: Vec<ParamInfo>,
         return_type: Option<Type>,
         span: Span,
+        is_overload: bool,
+        overloads: Vec<(Vec<ParamInfo>, Option<Type>)>,
     },
     Proc {
         params: Vec<ParamInfo>,
@@ -237,6 +239,7 @@ pub enum SemanticErrorKind {
         details: String,
     },
     BreakOutsideLoop,
+    ContinueOutsideLoop,
     UnknownLoopLabel {
         name: String,
     },
@@ -307,9 +310,11 @@ pub enum SemanticErrorKind {
     },
     InvalidSlice {
         ty: String,
+        missing_getter: bool,
     },
     InvalidSubscript {
         ty: String,
+        missing_getter: bool,
     },
     UnknownMethod {
         class: String,
@@ -488,6 +493,7 @@ impl SemanticErrorKind {
                     format!("Внутренняя ошибка компилятора (ICE): {details}")
                 }
                 Self::BreakOutsideLoop => "'break' вне цикла".to_owned(),
+                Self::ContinueOutsideLoop => "'continue' вне цикла".to_owned(),
                 Self::UnknownLoopLabel { name } => format!("Неизвестная метка цикла: '{name}'"),
                 Self::AlreadyDeclared { name } => format!("'{name}' уже объявлен в этой области видимости"),
                 Self::DuplicateFunction { name, prev_span } => {
@@ -538,11 +544,21 @@ impl SemanticErrorKind {
                 Self::InvalidLogical { op, lty, rty } => {
                     format!("Логическая операция '{op}' требует логические операнды, получены '{lty}' и '{rty}'")
                 }
-                Self::InvalidSlice { ty } => {
-                    format!("Невозможно использовать оператор среза '[:]' для типа '{ty}'")
+                Self::InvalidSlice { ty, missing_getter } => {
+                    let hint = if *missing_getter {
+                        " (метод '__slice__' должен быть помечен аннотацией '@getter')"
+                    } else {
+                        ""
+                    };
+                    format!("Невозможно использовать оператор среза '[:]' для типа '{ty}'{hint}")
                 }
-                Self::InvalidSubscript { ty } => {
-                    format!("Невозможно использовать оператор индексации '[]' для типа '{ty}'")
+                Self::InvalidSubscript { ty, missing_getter } => {
+                    let hint = if *missing_getter {
+                        " (метод '__subscript__' должен быть помечен аннотацией '@getter')"
+                    } else {
+                        ""
+                    };
+                    format!("Невозможно использовать оператор индексации '[]' для типа '{ty}'{hint}")
                 }
                 Self::UnknownMethod { class, method, suggestion } => {
                     format!("Неизвестный метод '{method}' у класса '{class}'{suggestion}")
@@ -651,6 +667,7 @@ impl SemanticErrorKind {
                     format!("Internal compiler error (ICE): {details}")
                 }
                 Self::BreakOutsideLoop => "'break' outside of a loop".to_owned(),
+                Self::ContinueOutsideLoop => "'continue' outside of a loop".to_owned(),
                 Self::UnknownLoopLabel { name } => format!("Unknown loop label: '{name}'"),
                 Self::AlreadyDeclared { name } => format!("'{name}' is already declared in this scope"),
                 Self::DuplicateFunction { name, prev_span } => {
@@ -695,8 +712,22 @@ impl SemanticErrorKind {
                 Self::InvalidLogical { op, lty, rty } => {
                     format!("Logical operation '{op}' requires truthy operands, got '{lty}' and '{rty}'")
                 }
-                Self::InvalidSlice { ty } => format!("Cannot use slice operator '[:]' on type '{ty}'"),
-                Self::InvalidSubscript { ty } => format!("Cannot use subscript operator '[]' on type '{ty}'"),
+                Self::InvalidSlice { ty, missing_getter } => {
+                    let hint = if *missing_getter {
+                        " (method '__slice__' must be annotated with '@getter')"
+                    } else {
+                        ""
+                    };
+                    format!("Cannot use slice operator '[:]' on type '{ty}'{hint}")
+                }
+                Self::InvalidSubscript { ty, missing_getter } => {
+                    let hint = if *missing_getter {
+                        " (method '__subscript__' must be annotated with '@getter')"
+                    } else {
+                        ""
+                    };
+                    format!("Cannot use subscript operator '[]' on type '{ty}'{hint}")
+                }
                 Self::UnknownMethod { class, method, suggestion } => {
                     format!("Unknown method '{method}' on class '{class}'{suggestion}")
                 }

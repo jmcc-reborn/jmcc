@@ -115,6 +115,10 @@ impl Formatter<'_> {
             self.ind();
             self.w("@setter\n");
         }
+        if f.is_overload {
+            self.ind();
+            self.w("@overload\n");
+        }
         self.fmt_decl_start(
             [
                 f.is_exported.then_some("export "),
@@ -123,6 +127,9 @@ impl Formatter<'_> {
             "function ",
             f.name,
         );
+        if !f.generics.is_empty() {
+            self.fmt_list_like("<", ">", &f.generics, |s, g| s.w(s.r(*g)));
+        }
         let extra_len = f.return_type.map_or(0, |rt| 4 + self.r(rt).len()) + 2;
         self.fmt_params_with_extra(&f.params, extra_len);
         if let Some(rt) = f.return_type {

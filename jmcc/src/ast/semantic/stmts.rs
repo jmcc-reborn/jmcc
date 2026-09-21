@@ -22,6 +22,16 @@ impl Analyzer<'_> {
                     self.error(SemanticErrorKind::UnknownLoopLabel { name }, b.span.clone());
                 }
             }
+            Statement::Continue(c) => {
+                if self.loop_depth == 0 {
+                    self.error(SemanticErrorKind::ContinueOutsideLoop, c.span.clone());
+                } else if let Some(target_label) = c.label
+                    && !self.loop_labels.contains(&Some(target_label))
+                {
+                    let name = self.ast.strings.resolve(&target_label).to_owned();
+                    self.error(SemanticErrorKind::UnknownLoopLabel { name }, c.span.clone());
+                }
+            }
             Statement::If(i) => self.analyze_if(i),
             Statement::Match(m) => self.analyze_match_stmt(m),
             Statement::TryCatch(tc) => self.analyze_try_catch(tc),

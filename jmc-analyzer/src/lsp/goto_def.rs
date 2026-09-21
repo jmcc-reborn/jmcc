@@ -6,7 +6,10 @@ use jmcc::diagnostic::resolve_ast_span;
 use line_index::TextSize;
 use lsp_types::{GotoDefinitionParams, GotoDefinitionResponse, Location, Position, Range};
 
-use super::state::{DocumentData, ServerState, walk_statements};
+use super::state::{
+    DocumentData, ServerState, extract_import_path, get_word_at_offset, resolve_import_to_file,
+    walk_statements,
+};
 
 /// Finds the definition location of the symbol at the cursor position.
 #[must_use]
@@ -19,8 +22,22 @@ pub fn provide_definition(
     doc: &DocumentData,
     params: &GotoDefinitionParams,
 ) -> Option<GotoDefinitionResponse> {
-    let ast = doc.ast.as_ref()?;
     let pos = params.text_document_position_params.position;
+
+    // 0. Check if cursor is on an import statement line
+    let line_text = doc.text.lines().nth(pos.line as usize).unwrap_or("");
+    if let Some(import_path) = extract_import_path(line_text)
+        && let Some(file_path) =
+            resolve_import_to_file(&doc.path, &import_path, doc.ast.as_ref(), None)
+        && let Some(url) = ServerState::path_to_url(&file_path)
+    {
+        return Some(GotoDefinitionResponse::Scalar(Location {
+            uri: url,
+            range: Range::default(),
+        }));
+    }
+
+    let ast = doc.ast.as_ref()?;
 
     let index = ast.line_indexes.get(&doc.path)?;
     let offset = super::diagnostics::position_to_offset(index, pos)?;
@@ -605,38 +622,6 @@ fn file_matches(ast: &Ast, span: &Span, target_path: Option<&std::path::Path>) -
         path == target
     } else {
         false
-    }
-}
-
-fn get_word_at_offset(text: &str, offset: usize) -> Option<&str> {
-    if offset > text.len() {
-        return None;
-    }
-
-    let mut safe_offset = offset;
-    while safe_offset > 0 && !text.is_char_boundary(safe_offset) {
-        safe_offset -= 1;
-    }
-
-    let is_ident_char = |c: char| c.is_alphanumeric() || c == '_';
-
-    let start = text[..safe_offset]
-        .char_indices()
-        .rev()
-        .take_while(|(_, c)| is_ident_char(*c))
-        .last()
-        .map_or(safe_offset, |(idx, _)| idx);
-
-    let end = text[safe_offset..]
-        .char_indices()
-        .take_while(|(_, c)| is_ident_char(*c))
-        .last()
-        .map_or(safe_offset, |(idx, c)| safe_offset + idx + c.len_utf8());
-
-    if start < end {
-        Some(&text[start..end])
-    } else {
-        None
     }
 }
 

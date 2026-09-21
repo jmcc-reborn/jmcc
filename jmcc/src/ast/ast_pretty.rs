@@ -356,6 +356,9 @@ impl<'a> PrettyPrinter<'a> {
                 if fd.is_exported {
                     s.push_str(" [exported]");
                 }
+                if fd.is_overload {
+                    s.push_str(" [overload]");
+                }
                 Self::fmt_node(f, &s, &fd.span)?;
                 self.fmt_params(&fd.params, indent, f)?;
                 if let Some(rt) = fd.return_type {
@@ -447,6 +450,13 @@ impl<'a> PrettyPrinter<'a> {
                     Self::fmt_inline(f, &format!("Break '{}", self.r(lbl)), &b.span)
                 } else {
                     Self::fmt_inline(f, "Break", &b.span)
+                }
+            }
+            Statement::Continue(c) => {
+                if let Some(lbl) = c.label {
+                    Self::fmt_inline(f, &format!("Continue '{}", self.r(lbl)), &c.span)
+                } else {
+                    Self::fmt_inline(f, "Continue", &c.span)
                 }
             }
             Statement::VarDecl(declaration) => self.fmt_var_decl_stmt(declaration, indent, f),

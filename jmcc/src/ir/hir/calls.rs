@@ -235,6 +235,7 @@ impl HirBuilder<'_> {
 
     #[expect(
         clippy::too_many_lines,
+        clippy::cognitive_complexity,
         reason = "inline function call expansion binds arguments, default values, variadics, and records types"
     )]
     #[instrument(
@@ -277,12 +278,16 @@ impl HirBuilder<'_> {
         }
 
         let mut pos_idx = 0;
+        let mut first_param_var = None;
         for (i, param) in f.params.iter().enumerate() {
             let p_sym = self.sym(param.name);
             let fresh_sym = Symbol::from(format!("__inl_{}_{}", p_sym, self.temp_n));
             self.temp_n += 1;
             let p_var_raw = self.add(Hir::Var(VarName(fresh_sym)));
             let p_var = self.wrap_scope(p_var_raw, self.default_scope);
+            if i == 0 {
+                first_param_var = Some(p_var);
+            }
             self.declare(
                 p_sym,
                 Binding::Var {
@@ -334,9 +339,15 @@ impl HirBuilder<'_> {
                 let is_self_name = crate::utils::is_self_param(p_sym.as_str());
                 let is_self_param = is_init && i == 0 && is_self_name;
                 if is_self_param {
+                    let is_single =
+                        class_info.is_some_and(|c| self.ir_ctx.is_single_field_class(c));
                     let slots_len = class_info.map(|c| c.fields.len()).unwrap_or(0);
                     let zero = self.add(Hir::Num(0.0.into()));
-                    let list = self.add(Hir::List(vec![zero; slots_len].into_boxed_slice()));
+                    let list = if is_single {
+                        zero
+                    } else {
+                        self.add(Hir::List(vec![zero; slots_len].into_boxed_slice()))
+                    };
                     bindings.push((p_var, list));
                     continue;
                 }
@@ -362,6 +373,13 @@ impl HirBuilder<'_> {
         let mut body_ids = Vec::new();
         for stmt in &f.body {
             body_ids.push(self.conv_stmt(stmt)?);
+        }
+
+        if f.is_setter
+            && f.return_type.is_none()
+            && let Some(first_p) = first_param_var
+        {
+            body_ids.push(self.add(Hir::Set([ret_var, first_p])));
         }
 
         self.inline_return_var = prev_ret;
@@ -401,6 +419,10 @@ impl HirBuilder<'_> {
         Ok((positional, named))
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "Dispatches call expression lowering across constructors, static methods, instance methods, and actions"
+    )]
     #[instrument(skip(self, c), level = "trace")]
     pub(super) fn conv_call(&mut self, c: &CallExpr) -> Result<Id, IrError> {
         let target_expr = &self.ast.exprs[c.target];
@@ -409,10 +431,52 @@ impl HirBuilder<'_> {
         if let Expr::Ident(name, _) = target_expr {
             let sym = self.sym(*name);
             let name_str = sym.to_string();
-            if (*name == c.method || method_sym.as_str() == "call")
-                && self.ir_ctx.get_class_by_name(&name_str).is_some()
-            {
-                return self.conv_class_constructor(c, &name_str);
+            if let Some(class) = self.ir_ctx.get_class_by_name(&name_str).cloned() {
+                if *name == c.method || method_sym.as_str() == "call" {
+                    return self.conv_class_constructor(c, &name_str);
+                }
+                let class_ty = Type::Class(class.def_id, Vec::new());
+                if let Some(f) = self
+                    .find_in_classes(&class_ty, |cl| cl.methods.get(method_sym.as_str()).cloned())
+                {
+                    if f.is_inline {
+                        return self.expand_inline_func_call(
+                            &f,
+                            &c.args,
+                            Vec::new(),
+                            Vec::new(),
+                            Some(&class),
+                        );
+                    }
+                    let target_id = self.str_lit(self.sym(f.name));
+                    let (args_list, b) = self.build_args_list(&f, &c.args, false)?;
+                    let node = self.add(Hir::FuncCall([target_id, args_list]));
+                    return Ok(self.wrap_lets(node, b));
+                }
+                if let Some(p) = self.find_in_classes(&class_ty, |cl| {
+                    cl.processes.get(method_sym.as_str()).cloned()
+                }) {
+                    let named_args = c
+                        .args
+                        .iter()
+                        .enumerate()
+                        .map(|(i, arg)| {
+                            p.params.get(i).map_or_else(
+                                || arg.clone(),
+                                |param| ArgExpr {
+                                    name: Some(param.name),
+                                    value: arg.value,
+                                    spread: arg.spread,
+                                    is_ref: arg.is_ref,
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let (args_list, b) = self.conv_args(&named_args, None, false, false)?;
+                    let target_id = self.str_lit(self.sym(p.name));
+                    let node = self.add(Hir::ProcCall([target_id, args_list]));
+                    return Ok(self.wrap_lets(node, b));
+                }
             }
         }
 
@@ -450,8 +514,17 @@ impl HirBuilder<'_> {
                 .map(ClassMember::Method)
         });
         if let Some(ClassMember::Method(f)) = method {
-            let mut all_args = vec![positional(c.target)];
-            all_args.extend(c.args.iter().cloned());
+            let has_self = f
+                .params
+                .first()
+                .is_some_and(|p| crate::utils::is_self_param(self.sym(p.name).as_str()));
+            let all_args = if has_self {
+                let mut a = vec![positional(c.target)];
+                a.extend(c.args.iter().cloned());
+                a
+            } else {
+                c.args.clone()
+            };
             if f.is_inline {
                 return self.expand_inline_func_call(&f, &all_args, Vec::new(), Vec::new(), None);
             }
@@ -468,8 +541,17 @@ impl HirBuilder<'_> {
                 .map(ClassMember::Process)
         });
         if let Some(ClassMember::Process(p)) = process {
-            let mut all_args = vec![positional(c.target)];
-            all_args.extend(c.args.iter().cloned());
+            let has_self = p
+                .params
+                .first()
+                .is_some_and(|param| crate::utils::is_self_param(self.sym(param.name).as_str()));
+            let all_args = if has_self {
+                let mut a = vec![positional(c.target)];
+                a.extend(c.args.iter().cloned());
+                a
+            } else {
+                c.args.clone()
+            };
             let named_args = all_args
                 .iter()
                 .enumerate()
@@ -521,19 +603,66 @@ impl HirBuilder<'_> {
         }
 
         let is_dict = class_info.as_ref().is_some_and(|c| c.is_dict);
-        let default_instance = if is_dict {
-            self.add(Hir::Map(vec![].into_boxed_slice()))
-        } else {
-            let slots_len = class_info.as_ref().map_or(0, |c| c.fields.len());
-            let zero = self.add(Hir::Num(0.0.into()));
-            self.add(Hir::List(vec![zero; slots_len].into_boxed_slice()))
-        };
+        if is_dict {
+            let mut bindings = Vec::new();
+            let mut map_ids = Vec::new();
+            for arg in &c.args {
+                let key_name = if let Some(name_id) = arg.name {
+                    self.sym(name_id).to_string()
+                } else {
+                    continue;
+                };
+                let key_id = self.str_lit(key_name);
+                let (val_id, b) = self.atomize(arg.value)?;
+                map_ids.push(key_id);
+                map_ids.push(val_id);
+                bindings.extend(b);
+            }
+            let map_node = self.add(Hir::Map(map_ids.into_boxed_slice()));
+            return Ok(self.wrap_lets(map_node, bindings));
+        }
 
-        let (_, b) = self.conv_args(&c.args, None, false, false)?;
-        Ok(self.wrap_lets(default_instance, b))
+        let is_single = class_info
+            .as_ref()
+            .is_some_and(|c| self.ir_ctx.is_single_field_class(c));
+        let slots_len = class_info.as_ref().map_or(0, |c| c.fields.len());
+        let zero = self.add(Hir::Num(0.0.into()));
+        let mut slots = vec![zero; slots_len];
+        let mut bindings = Vec::new();
+
+        let mut pos_idx = 0;
+        for arg in &c.args {
+            let target_slot = arg.name.map_or_else(
+                || {
+                    let idx = pos_idx;
+                    pos_idx += 1;
+                    Some(idx)
+                },
+                |name_id| {
+                    let name = self.sym(name_id).to_string();
+                    let info = class_info.as_ref()?;
+                    info.fields.get(&name).map(|(_, idx)| *idx)
+                },
+            );
+
+            let (val_id, b) = self.atomize(arg.value)?;
+            bindings.extend(b);
+            if let Some(slot) = target_slot
+                && slot < slots_len
+            {
+                slots[slot] = val_id;
+            }
+        }
+
+        let default_instance = if is_single {
+            slots.first().copied().unwrap_or(zero)
+        } else {
+            self.add(Hir::List(slots.into_boxed_slice()))
+        };
+        Ok(self.wrap_lets(default_instance, bindings))
     }
 
-    fn build_args_list(
+    pub(super) fn build_args_list(
         &mut self,
         f: &Rc<FunctionDecl>,
         args: &[ArgExpr],

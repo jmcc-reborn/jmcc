@@ -414,7 +414,7 @@ impl TokenCollector<'_> {
                     self.collect_expr(val);
                 }
             }
-            Statement::Import(_) | Statement::Break(_) => {}
+            Statement::Import(_) | Statement::Break(_) | Statement::Continue(_) => {}
         }
     }
 

@@ -6,15 +6,53 @@ use std::collections::HashSet;
 
 use jmcc::ast::*;
 use jmcc::i18n::Lang;
-use jmcc::ir::KNOWN_OBJECTS;
 use jmcc::ir::ctx::{ClassInfo, IrCtx};
-use jmcdata::generated::ACTION_DEF_MAP;
+use jmcdata::generated::{
+    canonicalize_object, get_actions_for_object, get_entity_selectors, get_event_defs,
+    get_game_value_selectors, get_game_values, get_known_objects, get_player_selectors,
+};
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionParams, Documentation, InsertTextFormat,
     MarkupContent, MarkupKind, Position,
 };
 
 use super::state::{DocumentData, walk_statements};
+
+fn try_complete_scoped(doc: &DocumentData, trimmed: &str) -> Option<Vec<CompletionItem>> {
+    if let Some(colon_pos) = trimmed.rfind("::") {
+        let after_colons = &trimmed[colon_pos + 2..];
+        if after_colons
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+        {
+            let object_prefix = trimmed[..colon_pos].trim_end();
+            let ident = object_prefix
+                .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
+                .next()
+                .unwrap_or("");
+
+            if !ident.is_empty() {
+                if let Some(canonical) = canonicalize_object(ident) {
+                    if canonical == "value" {
+                        return Some(complete_justmc_game_values(ident, doc.lang));
+                    }
+                    if canonical == "event" {
+                        return Some(complete_justmc_events(doc.lang));
+                    }
+                    return Some(complete_justmc_actions(canonical, ident, doc.lang));
+                }
+
+                if let Some(ir_ctx) = &doc.ir_ctx
+                    && let Some(def_id) = ir_ctx.enums_by_name.get(ident)
+                    && let Some(enum_info) = ir_ctx.enums_by_def.get(def_id)
+                {
+                    return Some(complete_enum_variants(enum_info));
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Builds completion suggestions based on cursor context.
 #[must_use]
@@ -28,54 +66,81 @@ pub fn provide_completions(doc: &DocumentData, params: &CompletionParams) -> Vec
     let line_text = get_line_prefix(text, pos);
     let trimmed = line_text.trim_end();
 
-    // 1. Check if user typed `object::`
-    if let Some(colon_pos) = trimmed.rfind("::") {
-        let object_prefix = &trimmed[..colon_pos];
-        let ident = object_prefix
-            .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
-            .next()
-            .unwrap_or("");
+    // 1. Check if user typed `object::` or `object::prefix`
+    if let Some(res) = try_complete_scoped(doc, trimmed) {
+        return res;
+    }
 
-        if !ident.is_empty() {
-            // Check if it's a known JustMC object (player, variable, entity, world, etc.)
-            if KNOWN_OBJECTS.contains(&ident) {
-                return complete_justmc_actions(ident, doc.lang);
-            }
+    // 2. Check if user typed `obj.` or `obj.member_prefix`
+    if let Some(dot_pos) = trimmed.rfind('.') {
+        let after_dot = &trimmed[dot_pos + 1..];
+        if after_dot.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            let obj_prefix = &trimmed[..dot_pos];
+            let ident = obj_prefix
+                .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
+                .next()
+                .unwrap_or("");
 
-            // Check if it's an enum in IrCtx
-            if let Some(ir_ctx) = &doc.ir_ctx
-                && let Some(def_id) = ir_ctx.enums_by_name.get(ident)
-                && let Some(enum_info) = ir_ctx.enums_by_def.get(def_id)
-            {
-                return complete_enum_variants(enum_info);
+            if !ident.is_empty() {
+                // Check if it's an enum (e.g. MessageType.TEXT)
+                if let Some(ir_ctx) = &doc.ir_ctx
+                    && let Some(def_id) = ir_ctx.enums_by_name.get(ident)
+                    && let Some(enum_info) = ir_ctx.enums_by_def.get(def_id)
+                {
+                    return complete_enum_variants(enum_info);
+                }
+
+                if let Some(methods) = complete_class_members_by_var_name(doc, ident) {
+                    return methods;
+                }
             }
         }
     }
 
-    // 2. Check if user typed `obj.`
-    if let Some(obj_expr) = trimmed.strip_suffix('.') {
-        let ident = obj_expr
-            .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
-            .next()
-            .unwrap_or("");
-
-        if !ident.is_empty() {
-            // Check if it's an enum (e.g. MessageType.TEXT)
-            if let Some(ir_ctx) = &doc.ir_ctx
-                && let Some(def_id) = ir_ctx.enums_by_name.get(ident)
-                && let Some(enum_info) = ir_ctx.enums_by_def.get(def_id)
-            {
-                return complete_enum_variants(enum_info);
+    // 3. Check if user typed `<` for selectors or event generic
+    if let Some(angle_pos) = trimmed.rfind('<') {
+        let after_angle = &trimmed[angle_pos + 1..];
+        if after_angle.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            let before_angle = trimmed[..angle_pos].trim_end();
+            if before_angle.ends_with("event") || before_angle.ends_with("событие") {
+                return complete_justmc_events(doc.lang);
             }
-
-            if let Some(methods) = complete_class_members_by_var_name(doc, ident) {
-                return methods;
+            if let Some(colon_pos) = before_angle.rfind("::") {
+                let obj_part = &before_angle[..colon_pos];
+                let obj_ident = obj_part
+                    .rsplit(|c: char| !c.is_alphanumeric() && c != '_')
+                    .next()
+                    .unwrap_or("");
+                if let Some(norm_obj) = canonicalize_object(obj_ident)
+                    && let Some(selectors) = complete_selectors_for_object(norm_obj, doc.lang)
+                {
+                    return selectors;
+                }
             }
         }
     }
 
-    // 3. General completions: Keywords, snippets, JustMC objects, types, functions, local vars
+    // 4. Check if user typed `@` for decorators
+    if let Some(at_pos) = trimmed.rfind('@') {
+        let after_at = &trimmed[at_pos + 1..];
+        if after_at.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return decorator_completions(doc.lang);
+        }
+    }
+
+    // 5. Check if user typed `event ` or `событие `
+    let words: Vec<&str> = trimmed.split_whitespace().collect();
+    if (words.len() == 1
+        && (words[0] == "event" || words[0] == "событие")
+        && line_text.ends_with(' '))
+        || (words.len() == 2 && (words[0] == "event" || words[0] == "событие"))
+    {
+        return complete_justmc_events(doc.lang);
+    }
+
+    // 6. General completions: Keywords, types, JustMC objects, global symbols, local vars
     items.extend(keyword_completions(doc.lang));
+    items.extend(type_completions(doc.lang));
     items.extend(builtin_object_completions(doc.lang));
 
     if let Some(ir_ctx) = &doc.ir_ctx {
@@ -93,20 +158,17 @@ fn get_line_prefix(text: &str, pos: Position) -> String {
     for (current_line, line) in text.split('\n').enumerate() {
         if current_line as u32 == pos.line {
             let col = (pos.character as usize).min(line.len());
-            return line[..col].to_string();
+            return line[..col].trim_end_matches('\r').to_string();
         }
     }
     String::new()
 }
 
-fn complete_justmc_actions(object: &str, lang: Lang) -> Vec<CompletionItem> {
+fn complete_justmc_actions(canonical: &str, display_obj: &str, lang: Lang) -> Vec<CompletionItem> {
     let mut items = Vec::new();
 
-    for ((obj, name), def) in ACTION_DEF_MAP.entries() {
-        if *obj != object {
-            continue;
-        }
-
+    for def in get_actions_for_object(canonical) {
+        let name = def.name;
         let mut args_doc = String::new();
         let mut snippet_args = Vec::new();
         for (i, arg) in def.args.iter().enumerate() {
@@ -116,14 +178,14 @@ fn complete_justmc_actions(object: &str, lang: Lang) -> Vec<CompletionItem> {
         }
 
         let detail = if def.args.is_empty() {
-            format!("{object}::{name}()")
+            format!("{display_obj}::{name}()")
         } else {
             let arg_summary: Vec<_> = def
                 .args
                 .iter()
                 .map(|a| format!("{}: {}", a.id, a.arg_type))
                 .collect();
-            format!("{object}::{name}({})", arg_summary.join(", "))
+            format!("{display_obj}::{name}({})", arg_summary.join(", "))
         };
 
         let insert_text = if snippet_args.is_empty() {
@@ -134,12 +196,12 @@ fn complete_justmc_actions(object: &str, lang: Lang) -> Vec<CompletionItem> {
 
         let doc_text = if lang == Lang::Ru {
             format!(
-                "### `{object}::{name}`\n**Действие JustMC**\n- Тип: `{}`\n\n**Параметры:**{}",
+                "### `{display_obj}::{name}`\n**Действие JustMC**\n- Тип: `{}`\n\n**Параметры:**{}",
                 def.action_type, args_doc
             )
         } else {
             format!(
-                "### `{object}::{name}`\n**JustMC Action**\n- Type: `{}`\n\n**Parameters:**{}",
+                "### `{display_obj}::{name}`\n**JustMC Action**\n- Type: `{}`\n\n**Parameters:**{}",
                 def.action_type, args_doc
             )
         };
@@ -158,7 +220,186 @@ fn complete_justmc_actions(object: &str, lang: Lang) -> Vec<CompletionItem> {
         });
     }
 
+    items.sort_by(|a, b| a.label.cmp(&b.label));
     items
+}
+
+fn complete_justmc_game_values(display_obj: &str, lang: Lang) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    let is_ru = lang == Lang::Ru;
+
+    for gv in get_game_values() {
+        let name = gv.id;
+        let val_type = gv.value_type;
+
+        let detail = if is_ru {
+            format!("{display_obj}::{name} -> {val_type} (игровое значение)")
+        } else {
+            format!("{display_obj}::{name} -> {val_type} (game value)")
+        };
+
+        let doc_text = if is_ru {
+            format!(
+                "### `{display_obj}::{name}`\n**Игровое значение JustMC**\n- Тип: `{val_type}`\n- Идентификатор: `{name}`\n\n**Пример:**\n```jc\n{display_obj}::{name}\n{display_obj}::{name}<default>\n```"
+            )
+        } else {
+            format!(
+                "### `{display_obj}::{name}`\n**JustMC Game Value**\n- Type: `{val_type}`\n- Identifier: `{name}`\n\n**Example:**\n```jc\n{display_obj}::{name}\n{display_obj}::{name}<default>\n```"
+            )
+        };
+
+        items.push(CompletionItem {
+            label: (*name).to_owned(),
+            kind: Some(CompletionItemKind::PROPERTY),
+            detail: Some(detail),
+            documentation: Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: doc_text,
+            })),
+            insert_text: Some((*name).to_owned()),
+            ..Default::default()
+        });
+    }
+
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items
+}
+
+fn complete_justmc_events(lang: Lang) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    let is_ru = lang == Lang::Ru;
+
+    for ev in get_event_defs() {
+        let event_id = ev.id;
+        let cancellable = ev.cancellable;
+        let cancel_str = if cancellable {
+            if is_ru {
+                "отменяемое"
+            } else {
+                "cancellable"
+            }
+        } else if is_ru {
+            "неотменяемое"
+        } else {
+            "not cancellable"
+        };
+
+        let detail = if is_ru {
+            format!("Событие: {event_id} ({cancel_str})")
+        } else {
+            format!("Event: {event_id} ({cancel_str})")
+        };
+
+        let doc_text = if is_ru {
+            format!("### Событие JustMC `{event_id}`\n- Отменяемое: `{cancellable}`")
+        } else {
+            format!("### JustMC Event `{event_id}`\n- Cancellable: `{cancellable}`")
+        };
+
+        items.push(CompletionItem {
+            label: (*event_id).to_owned(),
+            kind: Some(CompletionItemKind::EVENT),
+            detail: Some(detail),
+            documentation: Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: doc_text,
+            })),
+            insert_text: Some((*event_id).to_owned()),
+            ..Default::default()
+        });
+    }
+
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items
+}
+
+fn complete_selectors_for_object(object: &str, lang: Lang) -> Option<Vec<CompletionItem>> {
+    let canonical = canonicalize_object(object).unwrap_or(object);
+    let selectors: &[&str] = match canonical {
+        "value" => get_game_value_selectors(),
+        "player" => get_player_selectors(),
+        "entity" => get_entity_selectors(),
+        _ => return None,
+    };
+
+    let is_ru = lang == Lang::Ru;
+    let mut items: Vec<CompletionItem> = selectors
+        .iter()
+        .map(|sel| {
+            let detail = if is_ru {
+                format!("Селектор JustMC: {sel}")
+            } else {
+                format!("JustMC selector: {sel}")
+            };
+            CompletionItem {
+                label: (*sel).to_owned(),
+                kind: Some(CompletionItemKind::VALUE),
+                detail: Some(detail),
+                insert_text: Some(format!("{sel}>")),
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    Some(items)
+}
+
+fn decorator_completions(lang: Lang) -> Vec<CompletionItem> {
+    let is_ru = lang == Lang::Ru;
+    let decorators = [
+        (
+            "alias",
+            "alias(\"${1:name}\")",
+            desc(
+                is_ru,
+                "Псевдоним метода/функции",
+                "Method or function alias",
+            ),
+        ),
+        (
+            "lang_item",
+            "lang_item(\"${1:name}\")",
+            desc(is_ru, "Языковой элемент", "Language item mapping"),
+        ),
+        (
+            "overload",
+            "overload",
+            desc(is_ru, "Перегрузка метода", "Method overload"),
+        ),
+        (
+            "getter",
+            "getter",
+            desc(is_ru, "Геттер свойства", "Property getter"),
+        ),
+        (
+            "setter",
+            "setter",
+            desc(is_ru, "Сеттер свойства", "Property setter"),
+        ),
+        (
+            "hidden",
+            "hidden",
+            desc(is_ru, "Скрытый элемент", "Hidden item"),
+        ),
+        (
+            "description",
+            "description(\"${1:text}\")",
+            desc(is_ru, "Описание элемента", "Item description"),
+        ),
+    ];
+
+    decorators
+        .into_iter()
+        .map(|(name, snippet, d)| CompletionItem {
+            label: name.to_owned(),
+            kind: Some(CompletionItemKind::PROPERTY),
+            detail: Some(d.to_owned()),
+            insert_text: Some(snippet.to_owned()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        })
+        .collect()
 }
 
 fn complete_enum_variants(info: &jmcc::ir::ctx::EnumInfo) -> Vec<CompletionItem> {
@@ -270,67 +511,207 @@ fn collect_class_members(ast: &Ast, ir_ctx: &IrCtx, info: &ClassInfo) -> Vec<Com
     items
 }
 
-fn builtin_object_completions(lang: Lang) -> Vec<CompletionItem> {
-    KNOWN_OBJECTS
-        .iter()
-        .map(|obj| {
-            let detail = if lang == Lang::Ru {
-                format!("Встроенный объект JustMC: {obj}")
-            } else {
-                format!("Built-in JustMC object: {obj}")
-            };
-            CompletionItem {
-                label: (*obj).to_owned(),
-                kind: Some(CompletionItemKind::CLASS),
-                detail: Some(detail),
-                insert_text: Some(format!("{obj}::")),
-                ..Default::default()
-            }
+fn type_completions(lang: Lang) -> Vec<CompletionItem> {
+    let is_ru = lang == Lang::Ru;
+    let types = [
+        ("number", desc(is_ru, "Числовой тип", "Number type")),
+        ("число", desc(is_ru, "Числовой тип", "Number type")),
+        ("text", desc(is_ru, "Текстовый тип", "Text type")),
+        ("текст", desc(is_ru, "Текстовый тип", "Text type")),
+        ("boolean", desc(is_ru, "Логический тип", "Boolean type")),
+        ("логическое", desc(is_ru, "Логический тип", "Boolean type")),
+        ("булево", desc(is_ru, "Логический тип", "Boolean type")),
+        ("array", desc(is_ru, "Тип массива", "Array type")),
+        ("массив", desc(is_ru, "Тип массива", "Array type")),
+        (
+            "список",
+            desc(is_ru, "Тип массива/списка", "Array/list type"),
+        ),
+        ("map", desc(is_ru, "Тип словаря", "Map type")),
+        ("словарь", desc(is_ru, "Тип словаря", "Map type")),
+        ("карта", desc(is_ru, "Тип словаря/карты", "Map type")),
+        (
+            "location",
+            desc(is_ru, "Тип местоположения", "Location type"),
+        ),
+        (
+            "местоположение",
+            desc(is_ru, "Тип местоположения", "Location type"),
+        ),
+        ("локация", desc(is_ru, "Тип локации", "Location type")),
+        ("item", desc(is_ru, "Тип предмета", "Item type")),
+        ("предмет", desc(is_ru, "Тип предмета", "Item type")),
+        ("vector", desc(is_ru, "Тип вектора", "Vector type")),
+        ("вектор", desc(is_ru, "Тип вектора", "Vector type")),
+        ("sound", desc(is_ru, "Тип звука", "Sound type")),
+        ("звук", desc(is_ru, "Тип звука", "Sound type")),
+        ("particle", desc(is_ru, "Тип частицы", "Particle type")),
+        ("частица", desc(is_ru, "Тип частицы", "Particle type")),
+        ("potion", desc(is_ru, "Тип зелья", "Potion type")),
+        ("зелье", desc(is_ru, "Тип зелья", "Potion type")),
+        ("block", desc(is_ru, "Тип блока", "Block type")),
+        ("блок", desc(is_ru, "Тип блока", "Block type")),
+        ("entity", desc(is_ru, "Тип сущности", "Entity type")),
+        ("сущность", desc(is_ru, "Тип сущности", "Entity type")),
+        ("player", desc(is_ru, "Тип игрока", "Player type")),
+        ("игрок", desc(is_ru, "Тип игрока", "Player type")),
+        ("any", desc(is_ru, "Любой тип", "Any type")),
+        ("любой", desc(is_ru, "Любой тип", "Any type")),
+        ("iterator", desc(is_ru, "Тип итератора", "Iterator type")),
+        ("итератор", desc(is_ru, "Тип итератора", "Iterator type")),
+    ];
+
+    types
+        .into_iter()
+        .map(|(label, d)| CompletionItem {
+            label: (*label).to_owned(),
+            kind: Some(CompletionItemKind::TYPE_PARAMETER),
+            detail: Some((*d).to_owned()),
+            insert_text: Some((*label).to_owned()),
+            ..Default::default()
         })
         .collect()
 }
 
-fn global_symbol_completions(ir_ctx: &IrCtx, lang: Lang) -> Vec<CompletionItem> {
+fn builtin_object_completions(lang: Lang) -> Vec<CompletionItem> {
+    let is_ru = lang == Lang::Ru;
     let mut items = Vec::new();
 
-    for name in ir_ctx.classes_by_name.keys() {
-        let detail = if lang == Lang::Ru {
-            format!("Класс {name}")
+    for &(en, ru) in get_known_objects() {
+        let en_desc = if is_ru {
+            format!("Встроенный объект JustMC: {en}")
         } else {
-            format!("Class {name}")
+            format!("Built-in JustMC object: {en}")
         };
+        let ru_desc = if is_ru {
+            format!("Встроенный объект JustMC: {ru} ({en})")
+        } else {
+            format!("Built-in JustMC object: {ru} ({en})")
+        };
+
         items.push(CompletionItem {
-            label: name.clone(),
+            label: en.to_owned(),
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some(en_desc),
+            insert_text: Some(format!("{en}::")),
+            sort_text: Some(if is_ru {
+                format!("1_{en}")
+            } else {
+                format!("0_{en}")
+            }),
+            ..Default::default()
+        });
+
+        items.push(CompletionItem {
+            label: ru.to_owned(),
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some(ru_desc),
+            insert_text: Some(format!("{ru}::")),
+            sort_text: Some(if is_ru {
+                format!("0_{ru}")
+            } else {
+                format!("1_{ru}")
+            }),
+            ..Default::default()
+        });
+    }
+
+    items
+}
+
+fn global_symbol_completions(ir_ctx: &IrCtx, lang: Lang) -> Vec<CompletionItem> {
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+
+    let is_prelude = |name: &str| -> bool {
+        name.starts_with("std::primitives::")
+            || name.starts_with("primitives::")
+            || name.starts_with("std::math::core::")
+            || name.starts_with("math::core::")
+            || name.starts_with("std::prelude")
+            || name.starts_with("prelude")
+    };
+
+    for name in ir_ctx.classes_by_name.keys() {
+        let (display_name, origin) = if is_prelude(name) {
+            let short = name.rsplit("::").next().unwrap_or(name);
+            (short, Some(name.as_str()))
+        } else {
+            (name.as_str(), None)
+        };
+
+        if !seen.insert(display_name.to_owned()) {
+            continue;
+        }
+
+        let detail = match (lang, origin) {
+            (Lang::Ru, Some(orig)) => format!("Класс {display_name} ({orig})"),
+            (Lang::Ru, None) => format!("Класс {display_name}"),
+            (Lang::En, Some(orig)) => format!("Class {display_name} ({orig})"),
+            (Lang::En, None) => format!("Class {display_name}"),
+        };
+
+        items.push(CompletionItem {
+            label: display_name.to_owned(),
             kind: Some(CompletionItemKind::CLASS),
             detail: Some(detail),
+            insert_text: Some(display_name.to_owned()),
             ..Default::default()
         });
     }
 
     for name in ir_ctx.enums_by_name.keys() {
-        let detail = if lang == Lang::Ru {
-            format!("Перечисление {name}")
+        let (display_name, origin) = if is_prelude(name) {
+            let short = name.rsplit("::").next().unwrap_or(name);
+            (short, Some(name.as_str()))
         } else {
-            format!("Enum {name}")
+            (name.as_str(), None)
         };
+
+        if !seen.insert(display_name.to_owned()) {
+            continue;
+        }
+
+        let detail = match (lang, origin) {
+            (Lang::Ru, Some(orig)) => format!("Перечисление {display_name} ({orig})"),
+            (Lang::Ru, None) => format!("Перечисление {display_name}"),
+            (Lang::En, Some(orig)) => format!("Enum {display_name} ({orig})"),
+            (Lang::En, None) => format!("Enum {display_name}"),
+        };
+
         items.push(CompletionItem {
-            label: name.clone(),
+            label: display_name.to_owned(),
             kind: Some(CompletionItemKind::ENUM),
             detail: Some(detail),
+            insert_text: Some(display_name.to_owned()),
             ..Default::default()
         });
     }
 
     for name in ir_ctx.type_aliases.keys() {
-        let detail = if lang == Lang::Ru {
-            format!("Псевдоним типа {name}")
+        let (display_name, origin) = if is_prelude(name) {
+            let short = name.rsplit("::").next().unwrap_or(name);
+            (short, Some(name.as_str()))
         } else {
-            format!("Type alias {name}")
+            (name.as_str(), None)
         };
+
+        if !seen.insert(display_name.to_owned()) {
+            continue;
+        }
+
+        let detail = match (lang, origin) {
+            (Lang::Ru, Some(orig)) => format!("Псевдоним типа {display_name} ({orig})"),
+            (Lang::Ru, None) => format!("Псевдоним типа {display_name}"),
+            (Lang::En, Some(orig)) => format!("Type alias {display_name} ({orig})"),
+            (Lang::En, None) => format!("Type alias {display_name}"),
+        };
+
         items.push(CompletionItem {
-            label: name.clone(),
+            label: display_name.to_owned(),
             kind: Some(CompletionItemKind::INTERFACE),
             detail: Some(detail),
+            insert_text: Some(display_name.to_owned()),
             ..Default::default()
         });
     }
@@ -433,6 +814,7 @@ const fn desc(is_ru: bool, ru: &'static str, en: &'static str) -> &'static str {
 fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
     let is_ru = lang == Lang::Ru;
     let keywords = [
+        // Declarations
         (
             "function",
             "function ${1:name}(${2:params}) {\n\t$0\n}",
@@ -442,6 +824,31 @@ fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
             "функция",
             "функция ${1:имя}(${2:параметры}) {\n\t$0\n}",
             desc(is_ru, "Объявление функции", "Function declaration"),
+        ),
+        (
+            "fun",
+            "fun ${1:name}(${2:params}) {\n\t$0\n}",
+            desc(is_ru, "Объявление действия/функции", "Action declaration"),
+        ),
+        (
+            "действие",
+            "действие ${1:имя}(${2:параметры}) {\n\t$0\n}",
+            desc(is_ru, "Объявление действия/функции", "Action declaration"),
+        ),
+        (
+            "def",
+            "def ${1:name}(${2:params}) {\n\t$0\n}",
+            desc(is_ru, "Определение функции", "Function definition"),
+        ),
+        (
+            "определение",
+            "определение ${1:имя}(${2:параметры}) {\n\t$0\n}",
+            desc(is_ru, "Определение функции", "Function definition"),
+        ),
+        (
+            "process",
+            "process ${1:name}(${2:params}) {\n\t$0\n}",
+            desc(is_ru, "Объявление процесса", "Process declaration"),
         ),
         (
             "proc",
@@ -494,6 +901,169 @@ fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
             desc(is_ru, "Объявление перечисления", "Enum declaration"),
         ),
         (
+            "typealias",
+            "typealias ${1:Alias} = ${2:Type};",
+            desc(is_ru, "Псевдоним типа", "Type alias declaration"),
+        ),
+        (
+            "type",
+            "type ${1:Alias} = ${2:Type};",
+            desc(is_ru, "Псевдоним типа", "Type alias declaration"),
+        ),
+        (
+            "тип",
+            "тип ${1:Имя} = ${2:Тип};",
+            desc(is_ru, "Псевдоним типа", "Type alias declaration"),
+        ),
+        (
+            "псевдоним",
+            "псевдоним ${1:Имя} = ${2:Тип};",
+            desc(is_ru, "Псевдоним типа", "Type alias declaration"),
+        ),
+        (
+            "import",
+            "import ${1:module};",
+            desc(is_ru, "Импорт модуля", "Module import"),
+        ),
+        (
+            "импорт",
+            "импорт ${1:модуль};",
+            desc(is_ru, "Импорт модуля", "Module import"),
+        ),
+        (
+            "export",
+            "export ",
+            desc(is_ru, "Экспорт объявления", "Export declaration"),
+        ),
+        (
+            "экспорт",
+            "экспорт ",
+            desc(is_ru, "Экспорт объявления", "Export declaration"),
+        ),
+        (
+            "from",
+            "from ${1:module} import ${2:item};",
+            desc(is_ru, "Импорт из модуля", "Import from module"),
+        ),
+        (
+            "из",
+            "из ${1:модуль} импорт ${2:элемент};",
+            desc(is_ru, "Импорт из модуля", "Import from module"),
+        ),
+        // Variables and modifiers
+        (
+            "var",
+            "var ${1:name} = ${2:value};",
+            desc(is_ru, "Объявление переменной", "Variable declaration"),
+        ),
+        (
+            "переменная",
+            "переменная ${1:имя} = ${2:значение};",
+            desc(is_ru, "Объявление переменной", "Variable declaration"),
+        ),
+        (
+            "перем",
+            "перем ${1:имя} = ${2:значение};",
+            desc(is_ru, "Объявление переменной", "Variable declaration"),
+        ),
+        (
+            "пусть",
+            "пусть ${1:имя} = ${2:значение};",
+            desc(is_ru, "Объявление переменной", "Variable declaration"),
+        ),
+        (
+            "const",
+            "const ${1:NAME} = ${2:value};",
+            desc(is_ru, "Объявление константы", "Constant declaration"),
+        ),
+        (
+            "константа",
+            "константа ${1:ИМЯ} = ${2:значение};",
+            desc(is_ru, "Объявление константы", "Constant declaration"),
+        ),
+        (
+            "inline",
+            "inline ",
+            desc(is_ru, "Встраиваемая функция", "Inline function modifier"),
+        ),
+        (
+            "встраиваемый",
+            "встраиваемый ",
+            desc(is_ru, "Встраиваемая функция", "Inline function modifier"),
+        ),
+        (
+            "local",
+            "local ",
+            desc(is_ru, "Локальная переменная", "Local scope modifier"),
+        ),
+        (
+            "локальный",
+            "локальный ",
+            desc(is_ru, "Локальная переменная", "Local scope modifier"),
+        ),
+        (
+            "game",
+            "game ",
+            desc(
+                is_ru,
+                "Игровая (глобальная) переменная",
+                "Game scope modifier",
+            ),
+        ),
+        (
+            "игра",
+            "игра ",
+            desc(
+                is_ru,
+                "Игровая (глобальная) переменная",
+                "Game scope modifier",
+            ),
+        ),
+        (
+            "save",
+            "save ",
+            desc(is_ru, "Сохраняемая переменная", "Save scope modifier"),
+        ),
+        (
+            "сохранить",
+            "сохранить ",
+            desc(is_ru, "Сохраняемая переменная", "Save scope modifier"),
+        ),
+        (
+            "сохранение",
+            "сохранение ",
+            desc(is_ru, "Сохраняемая переменная", "Save scope modifier"),
+        ),
+        (
+            "line",
+            "line ",
+            desc(
+                is_ru,
+                "Строковая переменная (текущая строка)",
+                "Line scope modifier",
+            ),
+        ),
+        (
+            "строка",
+            "строка ",
+            desc(
+                is_ru,
+                "Строковая переменная (текущая строка)",
+                "Line scope modifier",
+            ),
+        ),
+        (
+            "ref",
+            "ref ",
+            desc(is_ru, "Параметр по ссылке", "Reference parameter"),
+        ),
+        (
+            "ссылка",
+            "ссылка ",
+            desc(is_ru, "Параметр по ссылке", "Reference parameter"),
+        ),
+        // Control flow
+        (
             "if",
             "if ${1:condition} {\n\t$0\n}",
             desc(is_ru, "Условная конструкция", "If condition"),
@@ -521,7 +1091,12 @@ fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
         (
             "иначеесли",
             "иначеесли ${1:условие} {\n\t$0\n}",
-            desc(is_ru, "Ветвь иначеесли", "Elif branch"),
+            desc(is_ru, "Ветвь иначе-если", "Elif branch"),
+        ),
+        (
+            "иначе_если",
+            "иначе_если ${1:условие} {\n\t$0\n}",
+            desc(is_ru, "Ветвь иначе-если", "Elif branch"),
         ),
         (
             "while",
@@ -544,14 +1119,44 @@ fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
             desc(is_ru, "Цикл для-в", "For-in loop"),
         ),
         (
-            "return",
-            "return $0;",
-            desc(is_ru, "Возврат из функции", "Return statement"),
+            "match",
+            "match ${1:value} {\n\tcase ${2:pattern} => $0\n}",
+            desc(is_ru, "Сопоставление с образцом", "Match expression"),
         ),
         (
-            "вернуть",
-            "вернуть $0;",
-            desc(is_ru, "Возврат из функции", "Return statement"),
+            "выбор",
+            "выбор ${1:значение} {\n\tслучай ${2:образец} => $0\n}",
+            desc(is_ru, "Сопоставление с образцом", "Match expression"),
+        ),
+        (
+            "сопоставить",
+            "сопоставить ${1:значение} {\n\tслучай ${2:образец} => $0\n}",
+            desc(is_ru, "Сопоставление с образцом", "Match expression"),
+        ),
+        (
+            "case",
+            "case ${1:pattern} => $0",
+            desc(is_ru, "Ветвь сопоставления case", "Case branch"),
+        ),
+        (
+            "случай",
+            "случай ${1:образец} => $0",
+            desc(is_ru, "Ветвь сопоставления случай", "Case branch"),
+        ),
+        (
+            "вариант",
+            "вариант ${1:образец} => $0",
+            desc(is_ru, "Ветвь сопоставления вариант", "Case branch"),
+        ),
+        (
+            "default",
+            "default => $0",
+            desc(is_ru, "Ветвь по умолчанию", "Default branch"),
+        ),
+        (
+            "по_умолчанию",
+            "по_умолчанию => $0",
+            desc(is_ru, "Ветвь по умолчанию", "Default branch"),
         ),
         (
             "break",
@@ -564,33 +1169,196 @@ fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
             desc(is_ru, "Прерывание цикла", "Break statement"),
         ),
         (
-            "var",
-            "var ${1:name} = ${2:value};",
-            desc(is_ru, "Объявление переменной", "Variable declaration"),
+            "continue",
+            "continue;",
+            desc(is_ru, "Переход к следующей итерации", "Continue statement"),
         ),
         (
-            "import",
-            "import ${1:module};",
-            desc(is_ru, "Импорт модуля", "Module import"),
+            "продолжить",
+            "продолжить;",
+            desc(is_ru, "Переход к следующей итерации", "Continue statement"),
         ),
         (
-            "импорт",
-            "импорт ${1:модуль};",
-            desc(is_ru, "Импорт модуля", "Module import"),
+            "return",
+            "return $0;",
+            desc(is_ru, "Возврат из функции", "Return statement"),
         ),
         (
-            "export",
-            "export ",
-            desc(is_ru, "Экспорт объявления", "Export declaration"),
+            "вернуть",
+            "вернуть $0;",
+            desc(is_ru, "Возврат из функции", "Return statement"),
         ),
         (
-            "экспорт",
-            "экспорт ",
-            desc(is_ru, "Экспорт объявления", "Export declaration"),
+            "возврат",
+            "возврат $0;",
+            desc(is_ru, "Возврат из функции", "Return statement"),
         ),
+        (
+            "try",
+            "try {\n\t$1\n} catch ${2:e} {\n\t$0\n}",
+            desc(is_ru, "Блок перехвата исключений", "Try-catch block"),
+        ),
+        (
+            "попытка",
+            "попытка {\n\t$1\n} поймать ${2:ошибка} {\n\t$0\n}",
+            desc(is_ru, "Блок перехвата исключений", "Try-catch block"),
+        ),
+        (
+            "catch",
+            "catch ${1:e} {\n\t$0\n}",
+            desc(is_ru, "Перехват исключения", "Catch block"),
+        ),
+        (
+            "поймать",
+            "поймать ${1:ошибка} {\n\t$0\n}",
+            desc(is_ru, "Перехват исключения", "Catch block"),
+        ),
+        (
+            "перехват",
+            "перехват ${1:ошибка} {\n\t$0\n}",
+            desc(is_ru, "Перехват исключения", "Catch block"),
+        ),
+        (
+            "исключение",
+            "исключение ${1:ошибка} {\n\t$0\n}",
+            desc(is_ru, "Перехват исключения", "Catch block"),
+        ),
+        (
+            "throw",
+            "throw ${1:error};",
+            desc(is_ru, "Выброс исключения", "Throw statement"),
+        ),
+        (
+            "выбросить",
+            "выбросить ${1:ошибка};",
+            desc(is_ru, "Выброс исключения", "Throw statement"),
+        ),
+        (
+            "бросить",
+            "бросить ${1:ошибка};",
+            desc(is_ru, "Выброс исключения", "Throw statement"),
+        ),
+        // Operators and relations
+        ("not", "not ", desc(is_ru, "Логическое НЕ", "Logical NOT")),
+        ("не", "не ", desc(is_ru, "Логическое НЕ", "Logical NOT")),
+        ("and", "and ", desc(is_ru, "Логическое И", "Logical AND")),
+        ("и", "и ", desc(is_ru, "Логическое И", "Logical AND")),
+        ("or", "or ", desc(is_ru, "Логическое ИЛИ", "Logical OR")),
+        ("или", "или ", desc(is_ru, "Логическое ИЛИ", "Logical OR")),
+        (
+            "in",
+            "in ",
+            desc(is_ru, "Оператор вхождения", "Membership operator"),
+        ),
+        (
+            "в",
+            "в ",
+            desc(is_ru, "Оператор вхождения", "Membership operator"),
+        ),
+        (
+            "as",
+            "as ${1:Type}",
+            desc(is_ru, "Приведение типа", "Type cast"),
+        ),
+        (
+            "как",
+            "как ${1:Тип}",
+            desc(is_ru, "Приведение типа", "Type cast"),
+        ),
+        (
+            "implements",
+            "implements ${1:Interface}",
+            desc(is_ru, "Реализация интерфейса", "Interface implementation"),
+        ),
+        (
+            "реализует",
+            "реализует ${1:Интерфейс}",
+            desc(is_ru, "Реализация интерфейса", "Interface implementation"),
+        ),
+        (
+            "extends",
+            "extends ${1:BaseClass}",
+            desc(is_ru, "Наследование класса", "Class inheritance"),
+        ),
+        (
+            "расширяет",
+            "расширяет ${1:БазовыйКласс}",
+            desc(is_ru, "Наследование класса", "Class inheritance"),
+        ),
+        // String formatting prefixes
+        (
+            "plain",
+            "plain\"$0\"",
+            desc(
+                is_ru,
+                "Обычный текст без форматирования",
+                "Plain unformatted text",
+            ),
+        ),
+        (
+            "простой",
+            "простой\"$0\"",
+            desc(
+                is_ru,
+                "Обычный текст без форматирования",
+                "Plain unformatted text",
+            ),
+        ),
+        (
+            "legacy",
+            "legacy\"$0\"",
+            desc(
+                is_ru,
+                "Текст с цветовыми кодами Minecraft §",
+                "Legacy Minecraft § color codes",
+            ),
+        ),
+        (
+            "устаревший",
+            "устаревший\"$0\"",
+            desc(
+                is_ru,
+                "Текст с цветовыми кодами Minecraft §",
+                "Legacy Minecraft § color codes",
+            ),
+        ),
+        (
+            "minimessage",
+            "minimessage\"$0\"",
+            desc(
+                is_ru,
+                "Форматирование текста MiniMessage <color>",
+                "MiniMessage text formatting <color>",
+            ),
+        ),
+        (
+            "минисообщение",
+            "минисообщение\"$0\"",
+            desc(
+                is_ru,
+                "Форматирование текста MiniMessage <color>",
+                "MiniMessage text formatting <color>",
+            ),
+        ),
+        (
+            "json",
+            "json\"$0\"",
+            desc(is_ru, "Текст в формате JSON", "JSON formatted text"),
+        ),
+        (
+            "джсон",
+            "джсон\"$0\"",
+            desc(is_ru, "Текст в формате JSON", "JSON formatted text"),
+        ),
+        // Literals
         (
             "true",
             "true",
+            desc(is_ru, "Булево значение: истина", "Boolean true"),
+        ),
+        (
+            "истина",
+            "истина",
             desc(is_ru, "Булево значение: истина", "Boolean true"),
         ),
         (
@@ -617,13 +1385,26 @@ fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
 
     keywords
         .into_iter()
-        .map(|(label, snippet, desc)| CompletionItem {
-            label: (*label).to_owned(),
-            kind: Some(CompletionItemKind::KEYWORD),
-            detail: Some((*desc).to_owned()),
-            insert_text: Some((*snippet).to_owned()),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
+        .map(|(label, snippet, desc)| {
+            let is_cyrillic = label
+                .chars()
+                .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+            let sort_prefix = if is_ru {
+                if is_cyrillic { "0_" } else { "1_" }
+            } else if is_cyrillic {
+                "1_"
+            } else {
+                "0_"
+            };
+            CompletionItem {
+                label: (*label).to_owned(),
+                kind: Some(CompletionItemKind::KEYWORD),
+                detail: Some((*desc).to_owned()),
+                insert_text: Some((*snippet).to_owned()),
+                insert_text_format: Some(InsertTextFormat::SNIPPET),
+                sort_text: Some(format!("{sort_prefix}{label}")),
+                ..Default::default()
+            }
         })
         .collect()
 }

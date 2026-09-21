@@ -7,7 +7,7 @@ use jmcc::compile_project;
 use jmcc::project::Project;
 
 fn create_test_project_env(base_dir: &Path) {
-    let _ = fs::remove_dir_all(base_dir);
+    drop(fs::remove_dir_all(base_dir));
     fs::create_dir_all(base_dir).unwrap();
 
     // 1. Dependency package "math_lib"
@@ -101,7 +101,7 @@ fn test_compile_project_with_path_dependency() {
     );
 
     // Clean up
-    let _ = fs::remove_dir_all(&test_dir);
+    drop(fs::remove_dir_all(&test_dir));
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn test_project_profiles() {
     assert_eq!(release_profile.opt_level, Some(3));
 
     // Clean up
-    let _ = fs::remove_dir_all(&test_dir);
+    drop(fs::remove_dir_all(&test_dir));
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn test_project_find_upwards() {
     assert_eq!(found.name(), "my_app");
 
     // Clean up
-    let _ = fs::remove_dir_all(&test_dir);
+    drop(fs::remove_dir_all(&test_dir));
 }
 
 #[test]
@@ -149,7 +149,7 @@ fn test_create_package_bin_and_lib() {
     let base_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target")
         .join("tmp_new_pkg_test");
-    let _ = fs::remove_dir_all(&base_dir);
+    drop(fs::remove_dir_all(&base_dir));
 
     // 1. Bin package
     let bin_dir = base_dir.join("test_bin_app");
@@ -186,7 +186,7 @@ fn test_create_package_bin_and_lib() {
     let lib_manifest = fs::read_to_string(lib_dir.join("jmcc.toml")).unwrap();
     assert!(lib_manifest.contains("name = \"custom_lib\""));
 
-    let _ = fs::remove_dir_all(&base_dir);
+    drop(fs::remove_dir_all(&base_dir));
 }
 
 #[test]

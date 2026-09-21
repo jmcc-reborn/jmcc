@@ -90,6 +90,26 @@ pub struct Player {
     pub absorption_health: f64,
     /// The game mode.
     pub game_mode: String,
+    /// The food level.
+    pub food: f64,
+    /// The food saturation.
+    pub saturation: f64,
+    /// The experience level.
+    pub experience: f64,
+    /// The fire ticks.
+    pub fire_ticks: f64,
+    /// Whether the player is currently flying.
+    pub is_flying: bool,
+    /// Whether the player is allowed to fly.
+    pub allow_flying: bool,
+    /// Whether the player is sneaking.
+    pub is_sneaking: bool,
+    /// Whether the player is sprinting.
+    pub is_sprinting: bool,
+    /// Whether the player is gliding.
+    pub is_gliding: bool,
+    /// The spawn point, if set.
+    pub spawn_point: Option<Position>,
 }
 
 impl Player {
@@ -113,7 +133,38 @@ impl Player {
             max_health: 20.0,
             absorption_health: 0.0,
             game_mode: "SURVIVAL".to_owned(),
+            food: 20.0,
+            saturation: 5.0,
+            experience: 0.0,
+            fire_ticks: 0.0,
+            is_flying: false,
+            allow_flying: false,
+            is_sneaking: false,
+            is_sprinting: false,
+            is_gliding: false,
+            spawn_point: None,
         }
+    }
+
+    /// Heals the player by `amount`, up to `max_health`.
+    pub fn heal(&mut self, amount: f64) {
+        if amount > 0.0 {
+            self.health = (self.health + amount).min(self.max_health);
+        }
+    }
+
+    /// Damages the player by `amount`, first depleting absorption health and then health.
+    pub fn damage(&mut self, amount: f64) {
+        if amount <= 0.0 {
+            return;
+        }
+        let mut rem = amount;
+        if self.absorption_health > 0.0 {
+            let absorbed = self.absorption_health.min(rem);
+            self.absorption_health -= absorbed;
+            rem -= absorbed;
+        }
+        self.health = (self.health - rem).max(0.0);
     }
 }
 
@@ -128,6 +179,37 @@ pub struct Entity {
     pub uuid: String,
     /// The position.
     pub position: Position,
+    /// The health level.
+    pub health: f64,
+    /// The health ceiling.
+    pub max_health: f64,
+    /// The absorption level.
+    pub absorption_health: f64,
+    /// The fire ticks.
+    pub fire_ticks: f64,
+}
+
+impl Entity {
+    /// Heals the entity by `amount`, up to `max_health`.
+    pub fn heal(&mut self, amount: f64) {
+        if amount > 0.0 {
+            self.health = (self.health + amount).min(self.max_health);
+        }
+    }
+
+    /// Damages the entity by `amount`.
+    pub fn damage(&mut self, amount: f64) {
+        if amount <= 0.0 {
+            return;
+        }
+        let mut rem = amount;
+        if self.absorption_health > 0.0 {
+            let absorbed = self.absorption_health.min(rem);
+            self.absorption_health -= absorbed;
+            rem -= absorbed;
+        }
+        self.health = (self.health - rem).max(0.0);
+    }
 }
 
 /// A reference to a member of a selection: an index into the world's players or
@@ -207,6 +289,9 @@ impl Log {
 pub struct World {
     players: Vec<Player>,
     entities: Vec<Entity>,
+    blocks: std::collections::HashMap<(i64, i64, i64), String>,
+    world_time: f64,
+    weather: String,
     log: Log,
     tick: u64,
     world_name: String,
@@ -234,6 +319,9 @@ impl World {
         Self {
             players: Vec::new(),
             entities: Vec::new(),
+            blocks: std::collections::HashMap::new(),
+            world_time: 1000.0,
+            weather: "CLEAR".to_owned(),
             log: Log::new(),
             tick: 0,
             world_name: "mock".to_owned(),
@@ -258,12 +346,81 @@ impl World {
         self.event_cancelled = false;
     }
 
+    /// Looks up a block at coordinates (x, y, z).
+    #[must_use]
+    pub fn block_at(&self, x: i64, y: i64, z: i64) -> Option<&str> {
+        self.blocks.get(&(x, y, z)).map(String::as_str)
+    }
+
+    /// Sets a block at coordinates (x, y, z).
+    pub fn set_block(&mut self, x: i64, y: i64, z: i64, block: impl Into<String>) {
+        self.blocks.insert((x, y, z), block.into());
+    }
+
+    /// Breaks/removes a block at coordinates (x, y, z).
+    pub fn break_block(&mut self, x: i64, y: i64, z: i64) -> Option<String> {
+        self.blocks.remove(&(x, y, z))
+    }
+
+    /// The time of the world.
+    #[must_use]
+    pub const fn world_time(&self) -> f64 {
+        self.world_time
+    }
+
+    /// Sets the time of the world.
+    pub const fn set_world_time(&mut self, time: f64) {
+        self.world_time = time;
+    }
+
+    /// The current weather of the world.
+    #[must_use]
+    pub fn weather(&self) -> &str {
+        &self.weather
+    }
+
+    /// Sets the current weather of the world.
+    pub fn set_weather(&mut self, weather: impl Into<String>) {
+        self.weather = weather.into();
+    }
+
+    /// Removes an entity by index. Returns true if it existed.
+    pub fn remove_entity(&mut self, index: usize) -> bool {
+        if index < self.entities.len() {
+            self.entities.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Adds a player and returns a reference to it.
     #[tracing::instrument(level = "trace", skip(self, name))]
     pub fn add_player(&mut self, name: impl Into<String>) -> Target {
         let index = self.players.len();
         self.players.push(Player::new(name));
         Target::Player(index)
+    }
+
+    /// Adds a player at a specific position.
+    #[tracing::instrument(level = "trace", skip(self, name), fields(position = ?position))]
+    pub fn add_player_at(&mut self, name: impl Into<String>, position: Position) -> Target {
+        let index = self.players.len();
+        let mut player = Player::new(name);
+        player.position = position;
+        self.players.push(player);
+        Target::Player(index)
+    }
+
+    /// Removes a player by name. Returns true if the player existed.
+    #[tracing::instrument(level = "trace", skip(self, name))]
+    pub fn remove_player(&mut self, name: &str) -> bool {
+        if let Some(pos) = self.players.iter().position(|p| p.name == name) {
+            self.players.remove(pos);
+            true
+        } else {
+            false
+        }
     }
 
     /// Adds an entity and returns a reference to it.
@@ -276,6 +433,10 @@ impl World {
             name: None,
             kind,
             position,
+            health: 20.0,
+            max_health: 20.0,
+            absorption_health: 0.0,
+            fire_ticks: 0.0,
         });
         Target::Entity(index)
     }

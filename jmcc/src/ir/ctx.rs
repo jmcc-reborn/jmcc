@@ -108,6 +108,52 @@ pub struct ClassInfo {
     pub generics: Vec<StrId>,
 }
 
+impl ClassInfo {
+    #[must_use]
+    pub fn is_single_field(&self, classes: &HashMap<DefId, Self>) -> bool {
+        if self.is_dict || self.lang_item || self.is_interface {
+            return false;
+        }
+        let mut current = self.parent;
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(self.def_id);
+        while let Some(parent_def) = current {
+            if !visited.insert(parent_def) {
+                break;
+            }
+            if let Some(parent_class) = classes.get(&parent_def) {
+                if parent_class.is_dict || parent_class.lang_item || parent_class.is_interface {
+                    return false;
+                }
+                current = parent_class.parent;
+            } else {
+                break;
+            }
+        }
+        self.total_fields_count(classes) == 1
+    }
+
+    #[must_use]
+    pub fn total_fields_count(&self, classes: &HashMap<DefId, Self>) -> usize {
+        let mut total = self.fields.len();
+        let mut current = self.parent;
+        let mut visited = std::collections::HashSet::new();
+        visited.insert(self.def_id);
+        while let Some(parent_def) = current {
+            if !visited.insert(parent_def) {
+                break;
+            }
+            if let Some(parent_class) = classes.get(&parent_def) {
+                total += parent_class.fields.len();
+                current = parent_class.parent;
+            } else {
+                break;
+            }
+        }
+        total
+    }
+}
+
 #[derive(Clone)]
 pub struct EnumInfo {
     pub def_id: DefId,
@@ -535,6 +581,17 @@ impl IrCtx {
         } else {
             None
         }
+    }
+
+    #[must_use]
+    pub fn is_single_field_class(&self, class: &ClassInfo) -> bool {
+        class.is_single_field(&self.classes_by_def)
+    }
+
+    #[must_use]
+    pub fn is_single_field_type(&self, ty: &Type) -> bool {
+        self.get_class(ty)
+            .is_some_and(|c| c.is_single_field(&self.classes_by_def))
     }
 
     pub fn record_var_type(&mut self, name: Symbol, ty: Type) {

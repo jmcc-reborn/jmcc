@@ -569,6 +569,13 @@ fn error_code_and_label(kind: &SemanticErrorKind, lang: Lang) -> (&'static str, 
                 Lang::En => "'break' outside loop".to_owned(),
             }),
         ),
+        SemanticErrorKind::ContinueOutsideLoop => (
+            "E0011",
+            Some(match lang {
+                Lang::Ru => "'continue' вне цикла".to_owned(),
+                Lang::En => "'continue' outside loop".to_owned(),
+            }),
+        ),
         SemanticErrorKind::ReturnOutsideCallable => (
             "E0012",
             Some(match lang {
@@ -771,18 +778,46 @@ fn error_code_and_label(kind: &SemanticErrorKind, lang: Lang) -> (&'static str, 
                 Lang::En => format!("logical operation '{op}' on '{lty}' and '{rty}'"),
             }),
         ),
-        SemanticErrorKind::InvalidSlice { ty } => (
+        SemanticErrorKind::InvalidSlice { ty, missing_getter } => (
             "E0038",
             Some(match lang {
-                Lang::Ru => format!("срез '[:]' не поддерживается для '{ty}'"),
-                Lang::En => format!("slice '[:]' not supported for '{ty}'"),
+                Lang::Ru => {
+                    let hint = if *missing_getter {
+                        " (метод '__slice__' должен быть помечен аннотацией '@getter')"
+                    } else {
+                        ""
+                    };
+                    format!("срез '[:]' не поддерживается для '{ty}'{hint}")
+                }
+                Lang::En => {
+                    let hint = if *missing_getter {
+                        " (method '__slice__' must be annotated with '@getter')"
+                    } else {
+                        ""
+                    };
+                    format!("slice '[:]' not supported for '{ty}'{hint}")
+                }
             }),
         ),
-        SemanticErrorKind::InvalidSubscript { ty } => (
+        SemanticErrorKind::InvalidSubscript { ty, missing_getter } => (
             "E0039",
             Some(match lang {
-                Lang::Ru => format!("индексация '[]' не поддерживается для '{ty}'"),
-                Lang::En => format!("subscript '[]' not supported for '{ty}'"),
+                Lang::Ru => {
+                    let hint = if *missing_getter {
+                        " (метод '__subscript__' должен быть помечен аннотацией '@getter')"
+                    } else {
+                        ""
+                    };
+                    format!("индексация '[]' не поддерживается для '{ty}'{hint}")
+                }
+                Lang::En => {
+                    let hint = if *missing_getter {
+                        " (method '__subscript__' must be annotated with '@getter')"
+                    } else {
+                        ""
+                    };
+                    format!("subscript '[]' not supported for '{ty}'{hint}")
+                }
             }),
         ),
         SemanticErrorKind::UnknownParent { parent } => (

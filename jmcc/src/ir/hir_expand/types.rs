@@ -29,7 +29,8 @@ impl OverloadExpander<'_> {
             | Hir::Lt([_, _])
             | Hir::Le([_, _])
             | Hir::Gt([_, _])
-            | Hir::Ge([_, _]) => Type::Class(self.lang_item("boolean"), vec![]),
+            | Hir::Ge([_, _])
+            | Hir::In([_, _]) => Type::Class(self.lang_item("boolean"), vec![]),
             Hir::Str(_) | Hir::Text(_) => Type::Class(self.lang_item("text"), vec![]),
             Hir::Var(v) => self
                 .ctx

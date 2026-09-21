@@ -164,7 +164,8 @@ impl HirBuilder<'_> {
         let method_name = method.as_str();
         if let Expr::Ident(name, _) = target {
             let symbol = self.sym(*name);
-            if KNOWN_OBJECTS.contains(&symbol.as_str()) {
+            let is_var = matches!(self.lookup(symbol), Some(Binding::Var { .. }));
+            if !is_var && KNOWN_OBJECTS.contains(&symbol.as_str()) {
                 let object = symbol.as_str();
                 if let Some(definition) = schema::action_def(object, method_name) {
                     return (object, Some(definition), false);
@@ -183,6 +184,10 @@ impl HirBuilder<'_> {
     }
 
     #[instrument(skip(self, a), level = "trace")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "lowering actions and static class methods requires branching over action definitions and class members"
+    )]
     pub(super) fn conv_action(&mut self, a: &ActionExpr) -> Result<Id, IrError> {
         let is_statement = self.is_statement;
         self.is_statement = false;
@@ -191,6 +196,48 @@ impl HirBuilder<'_> {
         let name_sym = self.sym(a.name);
         let object_str = object_sym.as_str();
         let name_str = name_sym.as_str();
+
+        if let Some(class) = self.ir_ctx.get_class_by_name(object_str).cloned() {
+            let class_ty = Type::Class(class.def_id, Vec::new());
+            if let Some(f) = self.find_in_classes(&class_ty, |c| c.methods.get(name_str).cloned()) {
+                if f.is_inline {
+                    return self.expand_inline_func_call(
+                        &f,
+                        &a.args,
+                        Vec::new(),
+                        Vec::new(),
+                        Some(&class),
+                    );
+                }
+                let target_id = self.str_lit(self.sym(f.name));
+                let (args_list, b) = self.build_args_list(&f, &a.args, false)?;
+                let node = self.add(Hir::FuncCall([target_id, args_list]));
+                return Ok(self.wrap_lets(node, b));
+            }
+            if let Some(p) = self.find_in_classes(&class_ty, |c| c.processes.get(name_str).cloned())
+            {
+                let named_args = a
+                    .args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, arg)| {
+                        p.params.get(i).map_or_else(
+                            || arg.clone(),
+                            |param| ArgExpr {
+                                name: Some(param.name),
+                                value: arg.value,
+                                spread: arg.spread,
+                                is_ref: arg.is_ref,
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let (args_list, b) = self.conv_args(&named_args, None, false, false)?;
+                let target_id = self.str_lit(self.sym(p.name));
+                let node = self.add(Hir::ProcCall([target_id, args_list]));
+                return Ok(self.wrap_lets(node, b));
+            }
+        }
 
         let sel_id = self.convert_selector(object_str, a.selector)?;
 

@@ -67,7 +67,8 @@ export class array<T> implements Iterable<T> {
         return length_first.less_or_equals(length_second);
     }
 
-    inline function __contains__(first: array<T>, second: text) -> boolean {
+    @alias("contains", "содержит")
+    inline function __contains__(first: array<T>, second: T) -> boolean {
         return first.list_contains_value([second]);
     }
 

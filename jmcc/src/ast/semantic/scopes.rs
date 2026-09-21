@@ -48,16 +48,62 @@ impl Analyzer<'_> {
                     if self.declared_top_level.insert(name.clone()) {
                         self.declare(name, symbol.clone());
                     } else if let Some(Symbol::Func {
-                        span: prev_span, ..
+                        span: prev_span,
+                        is_overload: prev_is_overload,
+                        params: prev_params,
+                        return_type: prev_ret,
+                        mut overloads,
                     }) = self.lookup(&name)
                     {
-                        self.error(
-                            SemanticErrorKind::DuplicateFunction {
+                        if !f.is_overload && !prev_is_overload {
+                            self.error(
+                                SemanticErrorKind::DuplicateFunction {
+                                    name: name.clone(),
+                                    prev_span: self.format_span(&prev_span),
+                                },
+                                f.span.clone(),
+                            );
+                        } else if f.is_overload {
+                            if let Symbol::Func {
+                                params,
+                                return_type,
+                                ..
+                            } = symbol.clone()
+                            {
+                                overloads.push((params, return_type));
+                            }
+                            self.declare(
                                 name,
-                                prev_span: self.format_span(&prev_span),
-                            },
-                            f.span.clone(),
-                        );
+                                Symbol::Func {
+                                    params: prev_params,
+                                    return_type: prev_ret,
+                                    span: prev_span,
+                                    is_overload: prev_is_overload,
+                                    overloads,
+                                },
+                            );
+                        } else {
+                            overloads.push((prev_params, prev_ret));
+                            if let Symbol::Func {
+                                params,
+                                return_type,
+                                span,
+                                is_overload,
+                                ..
+                            } = symbol.clone()
+                            {
+                                self.declare(
+                                    name,
+                                    Symbol::Func {
+                                        params,
+                                        return_type,
+                                        span,
+                                        is_overload,
+                                        overloads,
+                                    },
+                                );
+                            }
+                        }
                     }
                     for a in &f.aliases {
                         let a_name = self.str(*a);
@@ -153,13 +199,17 @@ impl Analyzer<'_> {
 
     /// Function symbol: parameters and return type inferred from `return` when unannotated.
     fn function_symbol(&mut self, f: &FunctionDecl) -> Symbol {
-        let params = self.collect_params(&f.params, None);
-        let return_type = self.inferred_return_type(f);
-        Symbol::Func {
-            params,
-            return_type,
-            span: f.span.clone(),
-        }
+        self.with_generic_scope(&f.generics, |this| {
+            let params = this.collect_params(&f.params, None);
+            let return_type = this.inferred_return_type(f);
+            Symbol::Func {
+                params,
+                return_type,
+                span: f.span.clone(),
+                is_overload: f.is_overload,
+                overloads: Vec::new(),
+            }
+        })
     }
 
     /// Process symbol: parameters only, processes do not have return values.

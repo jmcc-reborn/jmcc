@@ -1,6 +1,8 @@
 //! Вызовы: разрешение и эмиссия вызовов функций, методов и конструкторов,
 //! развёртка inline-функций и подготовка аргументов.
 
+use crate::ir::ctx::ClassInfo;
+
 use super::*;
 
 impl<'a> OverloadExpander<'a> {
@@ -221,10 +223,10 @@ impl<'a> OverloadExpander<'a> {
     /// Call by qualified name: class constructor or function.
     /// `None` means the name is unknown and the call must be parsed as an action.
     fn conv_ast_named_call(&mut self, call: &CallExpr, name: Symbol) -> Result<Option<Id>> {
-        if let Some(class) = self.ctx.get_class_by_name(name.as_str()) {
+        if let Some(class) = self.ctx.get_class_by_name(name.as_str()).cloned() {
             let (def_id, is_dict, slots) = (class.def_id, class.is_dict, class.fields.len());
             return self
-                .conv_ast_ctor_call(call, def_id, slots, is_dict)
+                .conv_ast_ctor_call(call, &class, def_id, slots, is_dict)
                 .map(Some);
         }
 
@@ -243,12 +245,14 @@ impl<'a> OverloadExpander<'a> {
     fn conv_ast_ctor_call(
         &mut self,
         call: &CallExpr,
+        class_info: &ClassInfo,
         def_id: DefId,
         slots: usize,
         is_dict: bool,
     ) -> Result<Id> {
         let ty = Type::Class(def_id, vec![]);
-        let receiver = self.fresh_instance(slots, is_dict);
+        let is_single = self.ctx.is_single_field_class(class_info);
+        let receiver = self.fresh_instance(Some(class_info), slots, is_dict);
         let init = self.find_in_classes(&ty, |class| class.methods.get("__init__").cloned());
         if let Some(f) = init {
             let has_self = f
@@ -256,23 +260,35 @@ impl<'a> OverloadExpander<'a> {
                 .first()
                 .is_some_and(|p| crate::utils::is_self_param(self.ast.strings.resolve(&p.name)));
             let receiver = if has_self {
-                Some(self.fresh_instance(slots, is_dict))
+                Some(self.fresh_instance(Some(class_info), slots, is_dict))
             } else {
                 None
             };
             return self.emit_call(&f, &call.args, receiver);
         }
-        // Without `__init__` the args go nowhere, but are still evaluated for side effects.
-        let (_, bindings) = self.conv_ast_loose_args(&call.args)?;
-        Ok(self.wrap_lets(receiver, bindings))
+        let (ids, bindings) = self.conv_ast_loose_args(&call.args)?;
+        let result = if is_single && !ids.is_empty() {
+            ids[0]
+        } else {
+            receiver
+        };
+        Ok(self.wrap_lets(result, bindings))
     }
 
     /// Fresh class instance: a list of slots, or an empty dict.
-    fn fresh_instance(&mut self, slots: usize, is_dict: bool) -> Id {
+    fn fresh_instance(
+        &mut self,
+        class_info: Option<&ClassInfo>,
+        slots: usize,
+        is_dict: bool,
+    ) -> Id {
         if is_dict {
             return self.add(Hir::Map(vec![].into_boxed_slice()));
         }
         let zero = self.add(Hir::Num(0.0.into()));
+        if class_info.is_some_and(|c| self.ctx.is_single_field_class(c)) {
+            return zero;
+        }
         self.add(Hir::List(vec![zero; slots].into_boxed_slice()))
     }
 

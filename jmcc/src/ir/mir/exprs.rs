@@ -86,6 +86,7 @@ impl MirLowerer<'_> {
             Hir::Le([a, b]) => self.lower_cmp(*a, *b, "less_or_equals")?,
             Hir::Gt([a, b]) => self.lower_cmp(*a, *b, "greater")?,
             Hir::Ge([a, b]) => self.lower_cmp(*a, *b, "greater_or_equals")?,
+            Hir::In([a, b]) => self.lower_contains(*a, *b)?,
 
             Hir::And([a, b]) | Hir::BitAnd([a, b]) => self.lower_bitwise(*a, *b, "AND")?,
             Hir::Or([a, b]) | Hir::BitOr([a, b]) => self.lower_bitwise(*a, *b, "OR")?,
@@ -101,6 +102,7 @@ impl MirLowerer<'_> {
             Hir::While(ids) => self.lower_while_expr(*ids)?,
 
             Hir::Break => self.add(Mir::Break),
+            Hir::Continue => self.add(Mir::Continue),
 
             Hir::Return(value) => self.lower_return(*value)?,
 
@@ -274,6 +276,34 @@ impl MirLowerer<'_> {
         let else_act = self.else_action(else_block);
 
         // The final node determines the block's value in code generation.
+        let block = self.add(Mir::Block(
+            vec![if_action, else_act, temp].into_boxed_slice(),
+        ));
+        Ok(self.add(Mir::Let([temp, block, temp])))
+    }
+
+    #[instrument(skip(self), level = "trace")]
+    fn lower_contains(&mut self, item_hir: Id, coll_hir: Id) -> Result<Id, MirError> {
+        let item = self.lower_expr(item_hir)?;
+        let coll = self.lower_expr(coll_hir)?;
+        let temp = self.fresh_temp();
+
+        let true_val = self.add(Mir::Num(1.0.into()));
+        let set_true = self.make_set_var(temp, true_val);
+        let then_block = self.add(Mir::Block(vec![set_true].into_boxed_slice()));
+
+        let zero_val = self.add(Mir::Num(0.0.into()));
+        let set_zero = self.make_set_var(temp, zero_val);
+        let else_block = self.add(Mir::Block(vec![set_zero].into_boxed_slice()));
+
+        let item_list = self.add(Mir::List(vec![item].into_boxed_slice()));
+        let args = vec![
+            self.named_arg("list", coll),
+            self.named_arg("values", item_list),
+        ];
+        let if_action = self.action("variable", "list_contains_value", args, then_block);
+        let else_act = self.else_action(else_block);
+
         let block = self.add(Mir::Block(
             vec![if_action, else_act, temp].into_boxed_slice(),
         ));

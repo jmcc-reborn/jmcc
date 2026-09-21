@@ -32,6 +32,7 @@ export class map<K, V> implements Iterable<K> {
         return first.not_equals(second);
     }
 
+    @alias("contains", "содержит")
     inline function __contains__(first: map<K, V>, second: K) -> boolean {
         return first.map_has_key(second);
     }

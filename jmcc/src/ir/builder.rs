@@ -153,8 +153,6 @@ pub enum BinOpHir {
     Node(Hir),
     /// `BinOp::Assign` - handled specially by callers.
     Assign,
-    /// `BinOp::In` - handled specially by callers.
-    In,
     /// `BinOp::Range` - handled specially by callers.
     Range,
     /// `BinOp::RangeInclusive` - handled specially by callers.
@@ -184,7 +182,7 @@ pub const fn bin_op_to_hir(op: BinOp, left: Id, right: Id) -> BinOpHir {
         BinOp::BitXor => BinOpHir::Node(Hir::BitXor([left, right])),
         BinOp::Shl => BinOpHir::Node(Hir::Shl([left, right])),
         BinOp::Shr => BinOpHir::Node(Hir::Shr([left, right])),
-        BinOp::In => BinOpHir::In,
+        BinOp::In => BinOpHir::Node(Hir::In([left, right])),
         BinOp::Range => BinOpHir::Range,
         BinOp::RangeInclusive => BinOpHir::RangeInclusive,
         BinOp::Assign => BinOpHir::Assign,

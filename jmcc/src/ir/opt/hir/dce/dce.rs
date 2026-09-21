@@ -17,6 +17,7 @@ const fn is_pure(enode: &Hir) -> bool {
             | Hir::Set(_)
             | Hir::Return(_)
             | Hir::Break
+            | Hir::Continue
             | Hir::While(_)
             | Hir::Inc(_)
             | Hir::Dec(_)

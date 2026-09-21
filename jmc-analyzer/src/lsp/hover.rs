@@ -9,14 +9,90 @@ use line_index::TextSize;
 use lsp_types::{Hover, HoverContents, HoverParams, MarkupContent, MarkupKind, Position, Range};
 
 use super::diagnostics::span_to_range;
-use super::state::{DocumentData, format_type, ru_type_name, walk_statements};
+use super::state::{
+    DocumentData, extract_import_path, format_type, get_word_at_offset, resolve_import_to_file,
+    ru_type_name, walk_statements,
+};
 
 /// Computes hover information for the symbol at the cursor position.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Traverses imports, expressions, and statements with fallback resolution"
+)]
 pub fn provide_hover(doc: &DocumentData, params: &HoverParams) -> Option<Hover> {
-    let ast = doc.ast.as_ref()?;
     let pos = params.text_document_position_params.position;
 
+    // 0. Check if cursor is on an import line
+    let line_text = doc.text.lines().nth(pos.line as usize).unwrap_or("");
+    if let Some(import_path) = extract_import_path(line_text)
+        && let Some(file_path) =
+            resolve_import_to_file(&doc.path, &import_path, doc.ast.as_ref(), None)
+    {
+        // If cursor is directly on a specific imported symbol (e.g. Bubble in `import std::...::Bubble;`)
+        if let Some(ast) = &doc.ast
+            && let Some(index) = ast.line_indexes.get(&doc.path)
+            && let Some(offset) = super::diagnostics::position_to_offset(index, pos)
+            && let Some(word) = get_word_at_offset(&doc.text, offset)
+            && word != "import"
+            && word != "импорт"
+        {
+            let ident_range = get_ident_range_at_offset(&doc.text, offset, ast, &doc.path);
+            if let Some(h) = render_symbol_by_name(ast, word, doc.lang, &doc.path, ident_range) {
+                return Some(h);
+            }
+        }
+
+        let content = doc
+            .ast
+            .as_ref()
+            .and_then(|ast| ast.sources.get(&file_path).cloned())
+            .unwrap_or_else(|| std::fs::read_to_string(&file_path).unwrap_or_default());
+
+        let doc_comment = extract_module_doc_comment(&content, doc.lang);
+        let file_name = file_path
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or(&import_path);
+
+        let header = if doc.lang == Lang::Ru {
+            format!("### Модуль `{file_name}`")
+        } else {
+            format!("### Module `{file_name}`")
+        };
+
+        let markdown = doc_comment.map_or_else(
+            || {
+                if doc.lang == Lang::Ru {
+                    format!("{header}\n\n*Файл:* `{}`", file_path.display())
+                } else {
+                    format!("{header}\n\n*File:* `{}`", file_path.display())
+                }
+            },
+            |doc_text| format!("{header}\n\n{doc_text}"),
+        );
+
+        let range = Range {
+            start: Position {
+                line: pos.line,
+                character: 0,
+            },
+            end: Position {
+                line: pos.line,
+                character: line_text.encode_utf16().count() as u32,
+            },
+        };
+
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: markdown,
+            }),
+            range: Some(range),
+        });
+    }
+
+    let ast = doc.ast.as_ref()?;
     let index = ast.line_indexes.get(&doc.path)?;
     let offset = super::diagnostics::position_to_offset(index, pos)?;
 
@@ -58,7 +134,48 @@ pub fn provide_hover(doc: &DocumentData, params: &HoverParams) -> Option<Hover> 
         }
     });
 
-    found_stmt_hover
+    if let Some(h) = found_stmt_hover {
+        return Some(h);
+    }
+
+    // 3. Fallback: match word under cursor against all known AST symbols
+    if let Some(word) = get_word_at_offset(&doc.text, offset) {
+        let ident_range = get_ident_range_at_offset(&doc.text, offset, ast, &doc.path);
+        if let Some(h) = render_symbol_by_name(ast, word, doc.lang, &doc.path, ident_range) {
+            return Some(h);
+        }
+    }
+
+    None
+}
+
+/// Extracts module-level doc comments (`//! ...`) from the beginning of the file.
+#[must_use]
+pub fn extract_module_doc_comment(source: &str, lang: Lang) -> Option<String> {
+    let mut doc_lines = Vec::new();
+    let mut in_doc = false;
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("//!") {
+            in_doc = true;
+            let content = trimmed.strip_prefix("//!").unwrap_or("").trim();
+            doc_lines.push(content.to_owned());
+        } else if trimmed.is_empty() {
+            if in_doc {
+                doc_lines.push(String::new());
+            }
+        } else {
+            // Reached first non-comment non-empty line
+            break;
+        }
+    }
+
+    if doc_lines.is_empty() {
+        return None;
+    }
+
+    parse_localized_doc(&doc_lines, lang)
 }
 
 /// Extracts doc comments (`/// ...`) directly above the declaration at `span_start`.
@@ -260,9 +377,578 @@ fn render_function_signature(ast: &Ast, f: &FunctionDecl) -> String {
     )
 }
 
+fn render_class_decl_hover(
+    ast: &Ast,
+    c: &ClassDecl,
+    lang: Lang,
+    target_path: &std::path::Path,
+    range: Option<Range>,
+) -> Option<Hover> {
+    let (path, src, span) = resolve_ast_span(ast, &c.span)?;
+    let name = ast.strings.resolve(&c.name);
+    let short_name = name.rsplit("::").next().unwrap_or(name);
+
+    let generics_str = if c.generics.is_empty() {
+        String::new()
+    } else {
+        let g: Vec<_> = c.generics.iter().map(|g| ast.strings.resolve(g)).collect();
+        format!("<{}>", g.join(", "))
+    };
+
+    let parent_str = c
+        .parent
+        .map_or_else(String::new, |p| format!(" : {}", ast.strings.resolve(&p)));
+
+    let impl_str = if c.implements.is_empty() {
+        String::new()
+    } else {
+        let i: Vec<_> = c
+            .implements
+            .iter()
+            .map(|im| ast.strings.resolve(im))
+            .collect();
+        format!(" implements {}", i.join(", "))
+    };
+
+    let mut prefix = String::new();
+    if c.lang_item {
+        prefix.push_str("@lang_item\n");
+    }
+    if c.is_dict {
+        prefix.push_str("@dict\n");
+    }
+    if c.is_exported {
+        prefix.push_str("export ");
+    }
+
+    let mut markdown =
+        format!("```jc\n{prefix}class {short_name}{generics_str}{parent_str}{impl_str}\n```");
+    let aliases = render_aliases(ast, &c.aliases, lang);
+    markdown.push_str(&aliases);
+
+    if let Some(doc_text) = extract_doc_comment(src, span.start, lang) {
+        markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+    }
+
+    let hover_range = range.or_else(|| {
+        if path == target_path {
+            span_to_range(ast, target_path, &c.span)
+        } else {
+            None
+        }
+    });
+
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: hover_range,
+    })
+}
+
+fn render_interface_decl_hover(
+    ast: &Ast,
+    i: &InterfaceDecl,
+    lang: Lang,
+    target_path: &std::path::Path,
+    range: Option<Range>,
+) -> Option<Hover> {
+    let (path, src, span) = resolve_ast_span(ast, &i.span)?;
+    let name = ast.strings.resolve(&i.name);
+    let short_name = name.rsplit("::").next().unwrap_or(name);
+
+    let generics_str = if i.generics.is_empty() {
+        String::new()
+    } else {
+        let g: Vec<_> = i.generics.iter().map(|g| ast.strings.resolve(g)).collect();
+        format!("<{}>", g.join(", "))
+    };
+
+    let parent_str = if i.parents.is_empty() {
+        String::new()
+    } else {
+        let p: Vec<_> = i.parents.iter().map(|p| ast.strings.resolve(p)).collect();
+        format!(" : {}", p.join(", "))
+    };
+
+    let prefix = if i.is_exported { "export " } else { "" };
+    let mut markdown =
+        format!("```jc\n{prefix}interface {short_name}{generics_str}{parent_str}\n```");
+    let aliases = render_aliases(ast, &i.aliases, lang);
+    markdown.push_str(&aliases);
+
+    if let Some(doc_text) = extract_doc_comment(src, span.start, lang) {
+        markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+    }
+
+    let hover_range = range.or_else(|| {
+        if path == target_path {
+            span_to_range(ast, target_path, &i.span)
+        } else {
+            None
+        }
+    });
+
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: hover_range,
+    })
+}
+
+fn render_enum_decl_hover(
+    ast: &Ast,
+    e: &EnumDecl,
+    lang: Lang,
+    target_path: &std::path::Path,
+    range: Option<Range>,
+) -> Option<Hover> {
+    let (path, src, span) = resolve_ast_span(ast, &e.span)?;
+    let name = ast.strings.resolve(&e.name);
+    let short_name = name.rsplit("::").next().unwrap_or(name);
+
+    let values: Vec<_> = e.values.iter().map(|v| ast.strings.resolve(v)).collect();
+    let prefix = if e.is_exported { "export " } else { "" };
+    let mut markdown = format!(
+        "```jc\n{prefix}enum {short_name} {{\n    {}\n}}\n```",
+        values.join(",\n    ")
+    );
+    let aliases = render_aliases(ast, &e.aliases, lang);
+    markdown.push_str(&aliases);
+
+    if let Some(doc_text) = extract_doc_comment(src, span.start, lang) {
+        markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+    }
+
+    let hover_range = range.or_else(|| {
+        if path == target_path {
+            span_to_range(ast, target_path, &e.span)
+        } else {
+            None
+        }
+    });
+
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: hover_range,
+    })
+}
+
+fn render_typealias_decl_hover(
+    ast: &Ast,
+    t: &TypeAliasDecl,
+    lang: Lang,
+    target_path: &std::path::Path,
+    range: Option<Range>,
+) -> Option<Hover> {
+    let (path, src, span) = resolve_ast_span(ast, &t.span)?;
+    let name = ast.strings.resolve(&t.name);
+    let short_name = name.rsplit("::").next().unwrap_or(name);
+    let target_ty = ast.strings.resolve(&t.target_ty);
+
+    let generics_str = if t.generics.is_empty() {
+        String::new()
+    } else {
+        let g: Vec<_> = t.generics.iter().map(|g| ast.strings.resolve(g)).collect();
+        format!("<{}>", g.join(", "))
+    };
+
+    let prefix = if t.is_exported { "export " } else { "" };
+    let mut markdown =
+        format!("```jc\n{prefix}typealias {short_name}{generics_str} = {target_ty}\n```");
+    let aliases = render_aliases(ast, &t.aliases, lang);
+    markdown.push_str(&aliases);
+
+    if let Some(doc_text) = extract_doc_comment(src, span.start, lang) {
+        markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+    }
+
+    let hover_range = range.or_else(|| {
+        if path == target_path {
+            span_to_range(ast, target_path, &t.span)
+        } else {
+            None
+        }
+    });
+
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: hover_range,
+    })
+}
+
+fn render_function_decl_hover(
+    ast: &Ast,
+    f: &FunctionDecl,
+    lang: Lang,
+    target_path: &std::path::Path,
+    range: Option<Range>,
+) -> Option<Hover> {
+    let (path, src, span) = resolve_ast_span(ast, &f.span)?;
+    let sig = render_function_signature(ast, f);
+    let mut markdown = format!("```jc\n{sig}\n```");
+    let aliases = render_aliases(ast, &f.aliases, lang);
+    markdown.push_str(&aliases);
+
+    if let Some(doc_text) = extract_doc_comment(src, span.start, lang) {
+        markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+    }
+
+    let hover_range = range.or_else(|| {
+        if path == target_path {
+            span_to_range(ast, target_path, &f.span)
+        } else {
+            None
+        }
+    });
+
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: hover_range,
+    })
+}
+
+fn render_process_decl_hover(
+    ast: &Ast,
+    p: &ProcessDecl,
+    lang: Lang,
+    target_path: &std::path::Path,
+    range: Option<Range>,
+) -> Option<Hover> {
+    let (path, src, span) = resolve_ast_span(ast, &p.span)?;
+    let name = ast.strings.resolve(&p.name);
+    let short_name = name.rsplit("::").next().unwrap_or(name);
+
+    let params_str: Vec<_> = p
+        .params
+        .iter()
+        .map(|param| {
+            let param_name = ast.strings.resolve(&param.name);
+            let ty_str = param
+                .ty
+                .map_or_else(|| "any".to_owned(), |t| ast.strings.resolve(&t).to_owned());
+            if param.default.is_some() {
+                format!("{param_name}: {ty_str} = ...")
+            } else {
+                format!("{param_name}: {ty_str}")
+            }
+        })
+        .collect();
+
+    let prefix = if p.is_exported { "export " } else { "" };
+    let mut markdown = format!(
+        "```jc\n{prefix}process {short_name}({})\n```",
+        params_str.join(", ")
+    );
+    let aliases = render_aliases(ast, &p.aliases, lang);
+    markdown.push_str(&aliases);
+
+    if let Some(doc_text) = extract_doc_comment(src, span.start, lang) {
+        markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+    }
+
+    let hover_range = range.or_else(|| {
+        if path == target_path {
+            span_to_range(ast, target_path, &p.span)
+        } else {
+            None
+        }
+    });
+
+    Some(Hover {
+        contents: HoverContents::Markup(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: markdown,
+        }),
+        range: hover_range,
+    })
+}
+
+#[must_use]
+pub fn find_class_decl<'a>(ast: &'a Ast, name: &str) -> Option<&'a ClassDecl> {
+    for stmt in &ast.statements {
+        if let Statement::Class(c) = stmt {
+            let c_name = ast.strings.resolve(&c.name);
+            let short_name = c_name.rsplit("::").next().unwrap_or(c_name);
+            if short_name == name
+                || c_name == name
+                || c.aliases.iter().any(|a| ast.strings.resolve(a) == name)
+            {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+#[must_use]
+pub fn find_interface_decl<'a>(ast: &'a Ast, name: &str) -> Option<&'a InterfaceDecl> {
+    for stmt in &ast.statements {
+        if let Statement::Interface(i) = stmt {
+            let i_name = ast.strings.resolve(&i.name);
+            let short_name = i_name.rsplit("::").next().unwrap_or(i_name);
+            if short_name == name
+                || i_name == name
+                || i.aliases.iter().any(|a| ast.strings.resolve(a) == name)
+            {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+#[must_use]
+pub fn find_enum_decl<'a>(ast: &'a Ast, name: &str) -> Option<&'a EnumDecl> {
+    for stmt in &ast.statements {
+        if let Statement::Enum(e) = stmt {
+            let e_name = ast.strings.resolve(&e.name);
+            let short_name = e_name.rsplit("::").next().unwrap_or(e_name);
+            if short_name == name
+                || e_name == name
+                || e.aliases.iter().any(|a| ast.strings.resolve(a) == name)
+            {
+                return Some(e);
+            }
+        }
+    }
+    None
+}
+
+#[must_use]
+pub fn find_typealias_decl<'a>(ast: &'a Ast, name: &str) -> Option<&'a TypeAliasDecl> {
+    for stmt in &ast.statements {
+        if let Statement::TypeAlias(t) = stmt {
+            let t_name = ast.strings.resolve(&t.name);
+            let short_name = t_name.rsplit("::").next().unwrap_or(t_name);
+            if short_name == name
+                || t_name == name
+                || t.aliases.iter().any(|a| ast.strings.resolve(a) == name)
+            {
+                return Some(t);
+            }
+        }
+    }
+    None
+}
+
+#[must_use]
+pub fn find_function_decl<'a>(ast: &'a Ast, name: &str) -> Option<&'a FunctionDecl> {
+    fn search_in_stmts<'a>(
+        stmts: &'a [Statement],
+        name: &str,
+        ast: &Ast,
+    ) -> Option<&'a FunctionDecl> {
+        for stmt in stmts {
+            match stmt {
+                Statement::Function(f) => {
+                    let f_name = ast.strings.resolve(&f.name);
+                    let short_name = f_name.rsplit("::").next().unwrap_or(f_name);
+                    if short_name == name
+                        || f_name == name
+                        || f.aliases.iter().any(|a| ast.strings.resolve(a) == name)
+                    {
+                        return Some(f);
+                    }
+                    if let Some(found) = search_in_stmts(&f.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                Statement::Class(c) => {
+                    if let Some(found) = search_in_stmts(&c.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                Statement::Interface(i) => {
+                    if let Some(found) = search_in_stmts(&i.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                Statement::Process(p) => {
+                    if let Some(found) = search_in_stmts(&p.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                Statement::Event(e) => {
+                    if let Some(found) = search_in_stmts(&e.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    search_in_stmts(&ast.statements, name, ast)
+}
+
+#[must_use]
+pub fn find_process_decl<'a>(ast: &'a Ast, name: &str) -> Option<&'a ProcessDecl> {
+    fn search_in_stmts<'a>(
+        stmts: &'a [Statement],
+        name: &str,
+        ast: &Ast,
+    ) -> Option<&'a ProcessDecl> {
+        for stmt in stmts {
+            match stmt {
+                Statement::Process(p) => {
+                    let p_name = ast.strings.resolve(&p.name);
+                    let short_name = p_name.rsplit("::").next().unwrap_or(p_name);
+                    if short_name == name
+                        || p_name == name
+                        || p.aliases.iter().any(|a| ast.strings.resolve(a) == name)
+                    {
+                        return Some(p);
+                    }
+                    if let Some(found) = search_in_stmts(&p.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                Statement::Class(c) => {
+                    if let Some(found) = search_in_stmts(&c.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                Statement::Interface(i) => {
+                    if let Some(found) = search_in_stmts(&i.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                Statement::Function(f) => {
+                    if let Some(found) = search_in_stmts(&f.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                Statement::Event(e) => {
+                    if let Some(found) = search_in_stmts(&e.body, name, ast) {
+                        return Some(found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    search_in_stmts(&ast.statements, name, ast)
+}
+
+#[must_use]
+pub fn find_enum_variant_hover(
+    ast: &Ast,
+    name: &str,
+    lang: Lang,
+    target_path: &std::path::Path,
+    range: Option<Range>,
+) -> Option<Hover> {
+    for stmt in &ast.statements {
+        if let Statement::Enum(e) = stmt {
+            let enum_name = ast.strings.resolve(&e.name);
+            let short_enum = enum_name.rsplit("::").next().unwrap_or(enum_name);
+            for val in &e.values {
+                let val_name = ast.strings.resolve(val);
+                if val_name == name {
+                    let mut markdown = format!("```jc\nenum variant {short_enum}::{val_name}\n```");
+                    if let Some((_, src, e_span)) = resolve_ast_span(ast, &e.span)
+                        && let Some(doc_text) = extract_doc_comment(src, e_span.start, lang)
+                    {
+                        markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+                    }
+                    let hover_range = range.or_else(|| {
+                        if let Some((path, _, _)) = resolve_ast_span(ast, &e.span)
+                            && path == target_path
+                        {
+                            span_to_range(ast, target_path, &e.span)
+                        } else {
+                            None
+                        }
+                    });
+                    return Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: markdown,
+                        }),
+                        range: hover_range,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+#[must_use]
+pub fn render_symbol_by_name(
+    ast: &Ast,
+    name: &str,
+    lang: Lang,
+    target_path: &std::path::Path,
+    range: Option<Range>,
+) -> Option<Hover> {
+    if let Some(c) = find_class_decl(ast, name) {
+        return render_class_decl_hover(ast, c, lang, target_path, range);
+    }
+    if let Some(i) = find_interface_decl(ast, name) {
+        return render_interface_decl_hover(ast, i, lang, target_path, range);
+    }
+    if let Some(t) = find_typealias_decl(ast, name) {
+        return render_typealias_decl_hover(ast, t, lang, target_path, range);
+    }
+    if let Some(e) = find_enum_decl(ast, name) {
+        return render_enum_decl_hover(ast, e, lang, target_path, range);
+    }
+    if let Some(f) = find_function_decl(ast, name) {
+        return render_function_decl_hover(ast, f, lang, target_path, range);
+    }
+    if let Some(p) = find_process_decl(ast, name) {
+        return render_process_decl_hover(ast, p, lang, target_path, range);
+    }
+    if let Some(h) = find_enum_variant_hover(ast, name, lang, target_path, range) {
+        return Some(h);
+    }
+    None
+}
+
+#[must_use]
+pub fn extract_symbol_doc(ast: &Ast, name: &str, lang: Lang) -> Option<String> {
+    if let Some(c) = find_class_decl(ast, name)
+        && let Some((_, src, c_span)) = resolve_ast_span(ast, &c.span)
+    {
+        return extract_doc_comment(src, c_span.start, lang);
+    }
+    if let Some(i) = find_interface_decl(ast, name)
+        && let Some((_, src, i_span)) = resolve_ast_span(ast, &i.span)
+    {
+        return extract_doc_comment(src, i_span.start, lang);
+    }
+    if let Some(e) = find_enum_decl(ast, name)
+        && let Some((_, src, e_span)) = resolve_ast_span(ast, &e.span)
+    {
+        return extract_doc_comment(src, e_span.start, lang);
+    }
+    if let Some(t) = find_typealias_decl(ast, name)
+        && let Some((_, src, t_span)) = resolve_ast_span(ast, &t.span)
+    {
+        return extract_doc_comment(src, t_span.start, lang);
+    }
+    None
+}
+
 #[expect(
     clippy::too_many_lines,
-    clippy::cognitive_complexity,
     reason = "Traverses statement kinds to render contextual hovers"
 )]
 fn check_stmt_hover(doc: &DocumentData, stmt: &Statement, offset: usize) -> Option<Hover> {
@@ -271,8 +957,6 @@ fn check_stmt_hover(doc: &DocumentData, stmt: &Statement, offset: usize) -> Opti
         Statement::Function(f) => {
             let (path, src, span) = resolve_ast_span(ast, &f.span)?;
             if path == doc.path {
-                let _name = ast.strings.resolve(&f.name);
-
                 // Check parameter hover
                 for p in &f.params {
                     let (p_path, _, p_span) = resolve_ast_span(ast, &p.span)?;
@@ -282,7 +966,17 @@ fn check_stmt_hover(doc: &DocumentData, stmt: &Statement, offset: usize) -> Opti
                             || "any".to_owned(),
                             |t| ast.strings.resolve(&t).to_owned(),
                         );
-                        let markdown = format!("```jc\n(parameter) {p_name}: {ty_str}\n```");
+                        let mut markdown = format!("```jc\n(parameter) {p_name}: {ty_str}\n```");
+
+                        // If parameter has class/interface/enum/typealias type, attach its doc comment
+                        if let Some(t_id) = p.ty {
+                            let t_name = ast.strings.resolve(&t_id);
+                            let short_t = t_name.rsplit("::").next().unwrap_or(t_name);
+                            if let Some(doc_text) = extract_symbol_doc(ast, short_t, doc.lang) {
+                                markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+                            }
+                        }
+
                         return Some(Hover {
                             contents: HoverContents::Markup(MarkupContent {
                                 kind: MarkupKind::Markdown,
@@ -293,12 +987,74 @@ fn check_stmt_hover(doc: &DocumentData, stmt: &Statement, offset: usize) -> Opti
                     }
                 }
 
-                // Check function header hover (from declaration start up to function name and params)
-                if offset >= span.start && offset <= span.end {
-                    let sig = render_function_signature(ast, f);
-                    let mut markdown = format!("```jc\n{sig}\n```");
-                    let aliases = render_aliases(ast, &f.aliases, doc.lang);
-                    markdown.push_str(&aliases);
+                // Check function header hover (from declaration start up to '{')
+                let header_end = src[span.clone()]
+                    .find('{')
+                    .map_or(span.end, |p| span.start + p);
+                if offset >= span.start && offset <= header_end {
+                    return render_function_decl_hover(ast, f, doc.lang, &doc.path, None);
+                }
+            }
+        }
+        Statement::Class(c) => {
+            let (path, src, span) = resolve_ast_span(ast, &c.span)?;
+            if path == doc.path {
+                let header_end = src[span.clone()]
+                    .find('{')
+                    .map_or(span.end, |p| span.start + p);
+                if offset >= span.start && offset <= header_end {
+                    return render_class_decl_hover(ast, c, doc.lang, &doc.path, None);
+                }
+            }
+        }
+        Statement::Interface(i) => {
+            let (path, src, span) = resolve_ast_span(ast, &i.span)?;
+            if path == doc.path {
+                let header_end = src[span.clone()]
+                    .find('{')
+                    .map_or(span.end, |p| span.start + p);
+                if offset >= span.start && offset <= header_end {
+                    return render_interface_decl_hover(ast, i, doc.lang, &doc.path, None);
+                }
+            }
+        }
+        Statement::Enum(e) => {
+            let (path, src, span) = resolve_ast_span(ast, &e.span)?;
+            if path == doc.path {
+                let header_end = src[span.clone()]
+                    .find('{')
+                    .map_or(span.end, |p| span.start + p);
+                if offset >= span.start && offset <= header_end {
+                    return render_enum_decl_hover(ast, e, doc.lang, &doc.path, None);
+                }
+            }
+        }
+        Statement::TypeAlias(t) => {
+            let (path, _src, span) = resolve_ast_span(ast, &t.span)?;
+            if path == doc.path && offset >= span.start && offset <= span.end {
+                return render_typealias_decl_hover(ast, t, doc.lang, &doc.path, None);
+            }
+        }
+        Statement::Process(p) => {
+            let (path, src, span) = resolve_ast_span(ast, &p.span)?;
+            if path == doc.path {
+                let header_end = src[span.clone()]
+                    .find('{')
+                    .map_or(span.end, |p| span.start + p);
+                if offset >= span.start && offset <= header_end {
+                    return render_process_decl_hover(ast, p, doc.lang, &doc.path, None);
+                }
+            }
+        }
+        Statement::Event(e) => {
+            let (path, src, span) = resolve_ast_span(ast, &e.span)?;
+            if path == doc.path {
+                let header_end = src[span.clone()]
+                    .find('{')
+                    .map_or(span.end, |p| span.start + p);
+                if offset >= span.start && offset <= header_end {
+                    let name = ast.strings.resolve(&e.event_name);
+                    let mut markdown = format!("```jc\nevent {name}\n```");
 
                     if let Some(doc_text) = extract_doc_comment(src, span.start, doc.lang) {
                         markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
@@ -309,228 +1065,32 @@ fn check_stmt_hover(doc: &DocumentData, stmt: &Statement, offset: usize) -> Opti
                             kind: MarkupKind::Markdown,
                             value: markdown,
                         }),
-                        range: span_to_range(ast, &doc.path, &f.span),
+                        range: span_to_range(ast, &doc.path, &e.span),
                     });
                 }
             }
         }
-        Statement::Class(c) => {
-            let (path, src, span) = resolve_ast_span(ast, &c.span)?;
-            if path == doc.path && offset >= span.start && offset <= span.end {
-                let name = ast.strings.resolve(&c.name);
-                let short_name = name.rsplit("::").next().unwrap_or(name);
-
-                let generics_str = if c.generics.is_empty() {
-                    String::new()
-                } else {
-                    let g: Vec<_> = c.generics.iter().map(|g| ast.strings.resolve(g)).collect();
-                    format!("<{}>", g.join(", "))
-                };
-
-                let parent_str = c
-                    .parent
-                    .map_or_else(String::new, |p| format!(" : {}", ast.strings.resolve(&p)));
-
-                let impl_str = if c.implements.is_empty() {
-                    String::new()
-                } else {
-                    let i: Vec<_> = c
-                        .implements
-                        .iter()
-                        .map(|im| ast.strings.resolve(im))
-                        .collect();
-                    format!(" implements {}", i.join(", "))
-                };
-
-                let mut prefix = String::new();
-                if c.lang_item {
-                    prefix.push_str("@lang_item\n");
-                }
-                if c.is_dict {
-                    prefix.push_str("@dict\n");
-                }
-                if c.is_exported {
-                    prefix.push_str("export ");
-                }
-
-                let mut markdown = format!(
-                    "```jc\n{prefix}class {short_name}{generics_str}{parent_str}{impl_str}\n```"
-                );
-                let aliases = render_aliases(ast, &c.aliases, doc.lang);
-                markdown.push_str(&aliases);
-
-                if let Some(doc_text) = extract_doc_comment(src, span.start, doc.lang) {
-                    markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
-                }
-
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: span_to_range(ast, &doc.path, &c.span),
-                });
-            }
-        }
-        Statement::Interface(i) => {
-            let (path, src, span) = resolve_ast_span(ast, &i.span)?;
-            if path == doc.path && offset >= span.start && offset <= span.end {
-                let name = ast.strings.resolve(&i.name);
-                let short_name = name.rsplit("::").next().unwrap_or(name);
-
-                let generics_str = if i.generics.is_empty() {
-                    String::new()
-                } else {
-                    let g: Vec<_> = i.generics.iter().map(|g| ast.strings.resolve(g)).collect();
-                    format!("<{}>", g.join(", "))
-                };
-
-                let parent_str = if i.parents.is_empty() {
-                    String::new()
-                } else {
-                    let p: Vec<_> = i.parents.iter().map(|p| ast.strings.resolve(p)).collect();
-                    format!(" : {}", p.join(", "))
-                };
-
-                let prefix = if i.is_exported { "export " } else { "" };
-                let mut markdown =
-                    format!("```jc\n{prefix}interface {short_name}{generics_str}{parent_str}\n```");
-                let aliases = render_aliases(ast, &i.aliases, doc.lang);
-                markdown.push_str(&aliases);
-
-                if let Some(doc_text) = extract_doc_comment(src, span.start, doc.lang) {
-                    markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
-                }
-
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: span_to_range(ast, &doc.path, &i.span),
-                });
-            }
-        }
-        Statement::Enum(e) => {
-            let (path, src, span) = resolve_ast_span(ast, &e.span)?;
-            if path == doc.path && offset >= span.start && offset <= span.end {
-                let name = ast.strings.resolve(&e.name);
-                let short_name = name.rsplit("::").next().unwrap_or(name);
-
-                let values: Vec<_> = e.values.iter().map(|v| ast.strings.resolve(v)).collect();
-                let prefix = if e.is_exported { "export " } else { "" };
-                let mut markdown = format!(
-                    "```jc\n{prefix}enum {short_name} {{\n    {}\n}}\n```",
-                    values.join(",\n    ")
-                );
-                let aliases = render_aliases(ast, &e.aliases, doc.lang);
-                markdown.push_str(&aliases);
-
-                if let Some(doc_text) = extract_doc_comment(src, span.start, doc.lang) {
-                    markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
-                }
-
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: span_to_range(ast, &doc.path, &e.span),
-                });
-            }
-        }
-        Statement::TypeAlias(t) => {
-            let (path, src, span) = resolve_ast_span(ast, &t.span)?;
-            if path == doc.path && offset >= span.start && offset <= span.end {
-                let name = ast.strings.resolve(&t.name);
-                let short_name = name.rsplit("::").next().unwrap_or(name);
-                let target_ty = ast.strings.resolve(&t.target_ty);
-
-                let generics_str = if t.generics.is_empty() {
-                    String::new()
-                } else {
-                    let g: Vec<_> = t.generics.iter().map(|g| ast.strings.resolve(g)).collect();
-                    format!("<{}>", g.join(", "))
-                };
-
-                let prefix = if t.is_exported { "export " } else { "" };
-                let mut markdown = format!(
-                    "```jc\n{prefix}typealias {short_name}{generics_str} = {target_ty}\n```"
-                );
-                let aliases = render_aliases(ast, &t.aliases, doc.lang);
-                markdown.push_str(&aliases);
-
-                if let Some(doc_text) = extract_doc_comment(src, span.start, doc.lang) {
-                    markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
-                }
-
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: span_to_range(ast, &doc.path, &t.span),
-                });
-            }
-        }
-        Statement::Process(p) => {
-            let (path, src, span) = resolve_ast_span(ast, &p.span)?;
-            if path == doc.path && offset >= span.start && offset <= span.end {
-                let name = ast.strings.resolve(&p.name);
-                let short_name = name.rsplit("::").next().unwrap_or(name);
-
-                let params_str: Vec<_> = p
-                    .params
-                    .iter()
-                    .map(|param| ast.strings.resolve(&param.name).to_owned())
-                    .collect();
-
-                let prefix = if p.is_exported { "export " } else { "" };
-                let mut markdown = format!(
-                    "```jc\n{prefix}process {short_name}({})\n```",
-                    params_str.join(", ")
-                );
-                let aliases = render_aliases(ast, &p.aliases, doc.lang);
-                markdown.push_str(&aliases);
-
-                if let Some(doc_text) = extract_doc_comment(src, span.start, doc.lang) {
-                    markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
-                }
-
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: span_to_range(ast, &doc.path, &p.span),
-                });
-            }
-        }
-        Statement::Event(e) => {
-            let (path, src, span) = resolve_ast_span(ast, &e.span)?;
-            if path == doc.path && offset >= span.start && offset <= span.end {
-                let name = ast.strings.resolve(&e.event_name);
-                let mut markdown = format!("```jc\nevent {name}\n```");
-
-                if let Some(doc_text) = extract_doc_comment(src, span.start, doc.lang) {
-                    markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
-                }
-
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: span_to_range(ast, &doc.path, &e.span),
-                });
-            }
-        }
         Statement::VarDecl(v) => {
-            for name in &v.names {
+            for (i, name) in v.names.iter().enumerate() {
                 let (path, _, span) = resolve_ast_span(ast, &name.span)?;
                 if path == doc.path && offset >= span.start && offset <= span.end {
                     let s = jmcc::ast::text_value_to_string(ast, name);
-                    let markdown = format!("```jc\nvar {s}\n```");
+                    let ty_str = v
+                        .tys
+                        .get(i)
+                        .and_then(|opt| *opt)
+                        .map(|t| ast.strings.resolve(&t))
+                        .unwrap_or("any");
+                    let mut markdown = format!("```jc\nvar {s}: {ty_str}\n```");
+
+                    if let Some(t_id) = v.tys.get(i).and_then(|opt| *opt) {
+                        let t_name = ast.strings.resolve(&t_id);
+                        let short_t = t_name.rsplit("::").next().unwrap_or(t_name);
+                        if let Some(doc_text) = extract_symbol_doc(ast, short_t, doc.lang) {
+                            markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+                        }
+                    }
+
                     return Some(Hover {
                         contents: HoverContents::Markup(MarkupContent {
                             kind: MarkupKind::Markdown,
@@ -548,6 +1108,7 @@ fn check_stmt_hover(doc: &DocumentData, stmt: &Statement, offset: usize) -> Opti
 
 #[expect(
     clippy::too_many_lines,
+    clippy::cognitive_complexity,
     reason = "Traverses expression kinds to render contextual hovers"
 )]
 fn check_expr_hover(
@@ -608,7 +1169,8 @@ fn check_expr_hover(
                 (s, "var")
             };
 
-            let ty_str = doc.expr_types.get(&eid).map_or_else(
+            let ty_opt = doc.expr_types.get(&eid);
+            let ty_str = ty_opt.map_or_else(
                 || {
                     v.value_type.map_or_else(
                         || {
@@ -631,7 +1193,35 @@ fn check_expr_hover(
                 |ty| format_type(ty, doc.ir_ctx.as_ref(), doc.lang),
             );
 
-            let markdown = format!("```jc\n({scope_str}) {var_kw} {name_str}: {ty_str}\n```");
+            let mut markdown = format!("```jc\n({scope_str}) {var_kw} {name_str}: {ty_str}\n```");
+
+            // Attach documentation of the underlying class, interface, enum, or typealias
+            let mut type_doc = None;
+            if let Some(Type::Class(def_id, _)) = ty_opt
+                && let Some(ir_ctx) = &doc.ir_ctx
+                && let Some(class_info) = ir_ctx.classes_by_def.get(def_id)
+            {
+                if let Some(c) = find_class_decl(ast, &class_info.name)
+                    && let Some((_, src, c_span)) = resolve_ast_span(ast, &c.span)
+                {
+                    type_doc = extract_doc_comment(src, c_span.start, doc.lang);
+                }
+            } else if let Some(t_id) = v.value_type {
+                let t_name = ast.strings.resolve(&t_id);
+                let short_t = t_name.rsplit("::").next().unwrap_or(t_name);
+                type_doc = extract_symbol_doc(ast, short_t, doc.lang);
+            }
+
+            if type_doc.is_none() {
+                let short_ty = ty_str.trim().rsplit("::").next().unwrap_or(&ty_str).trim();
+                let base_name = short_ty.split('<').next().unwrap_or(short_ty).trim();
+                type_doc = extract_symbol_doc(ast, base_name, doc.lang);
+            }
+
+            if let Some(doc_text) = type_doc {
+                markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+            }
+
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -642,11 +1232,12 @@ fn check_expr_hover(
         }
         Expr::Property(p) => {
             let prop_name = ast.strings.resolve(&p.property);
+            let ident_range = get_ident_range_at_offset(&doc.text, offset, ast, &doc.path);
 
             // 1. Check if object is an enum (e.g. MessageType.TEXT)
             if let Some(Expr::Ident(obj_id, _)) = ast.exprs.get(p.object) {
                 let obj_name = ast.strings.resolve(obj_id);
-                if let Some(e) = find_enum_by_name(ast, obj_name) {
+                if let Some(e) = find_enum_decl(ast, obj_name) {
                     for val in &e.values {
                         let val_name = ast.strings.resolve(val);
                         if val_name == prop_name {
@@ -663,8 +1254,7 @@ fn check_expr_hover(
                                     kind: MarkupKind::Markdown,
                                     value: markdown,
                                 }),
-                                range: get_ident_range_at_offset(&doc.text, offset, ast, &doc.path)
-                                    .or_else(|| span_to_range(ast, &doc.path, span)),
+                                range: ident_range.or_else(|| span_to_range(ast, &doc.path, span)),
                             });
                         }
                     }
@@ -675,24 +1265,53 @@ fn check_expr_hover(
             if let Some(Type::Class(def_id, _)) = doc.expr_types.get(&p.object)
                 && let Some(ir_ctx) = &doc.ir_ctx
                 && let Some(class_info) = ir_ctx.classes_by_def.get(def_id)
-                && let Some((field_ty, _)) = class_info.fields.get(prop_name)
             {
-                let markdown = format!(
-                    "```jc\n(field) {}.{prop_name}: {field_ty}\n```",
-                    class_info.name
-                );
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: get_ident_range_at_offset(&doc.text, offset, ast, &doc.path)
-                        .or_else(|| span_to_range(ast, &doc.path, span)),
-                });
+                if let Some((field_ty, _)) = class_info.fields.get(prop_name) {
+                    let mut markdown = format!(
+                        "```jc\n(field) {}.{prop_name}: {field_ty}\n```",
+                        class_info.name
+                    );
+                    if let Some(c) = find_class_decl(ast, &class_info.name) {
+                        for member in &c.body {
+                            if let Statement::VarDecl(v) = member {
+                                for name in &v.names {
+                                    let s = jmcc::ast::text_value_to_string(ast, name);
+                                    if s == prop_name
+                                        && let Some((_, src, v_span)) =
+                                            resolve_ast_span(ast, &v.span)
+                                        && let Some(doc_text) =
+                                            extract_doc_comment(src, v_span.start, doc.lang)
+                                    {
+                                        markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: markdown,
+                        }),
+                        range: ident_range.or_else(|| span_to_range(ast, &doc.path, span)),
+                    });
+                }
+                if let Some(m) = class_info.methods.get(prop_name) {
+                    return render_function_decl_hover(ast, m, doc.lang, &doc.path, ident_range);
+                }
+                if let Some(pr) = class_info.processes.get(prop_name) {
+                    return render_process_decl_hover(ast, pr, doc.lang, &doc.path, ident_range);
+                }
+                if let Some(g) = class_info.getters.get(prop_name) {
+                    return render_function_decl_hover(ast, g, doc.lang, &doc.path, ident_range);
+                }
             }
         }
         Expr::Ident(str_id, s) => {
             let ident = ast.strings.resolve(str_id);
+            let ident_range = get_ident_range_at_offset(&doc.text, offset, ast, &doc.path)
+                .or_else(|| span_to_range(ast, &doc.path, s));
 
             // 1. Check if it's a game value
             if let Some(gv_type) = get_game_value_type(ident) {
@@ -707,38 +1326,26 @@ fn check_expr_hover(
                 });
             }
 
-            // 2. Check if it's an enum variant (e.g. TEXT)
-            for stmt in &ast.statements {
-                if let Statement::Enum(e) = stmt {
-                    let enum_name = ast.strings.resolve(&e.name);
-                    let short_enum = enum_name.rsplit("::").next().unwrap_or(enum_name);
-                    for val in &e.values {
-                        let val_name = ast.strings.resolve(val);
-                        if val_name == ident {
-                            let mut markdown =
-                                format!("```jc\nenum variant {short_enum}::{val_name}\n```");
-                            if let Some((_, src, e_span)) = resolve_ast_span(ast, &e.span)
-                                && let Some(doc_text) =
-                                    extract_doc_comment(src, e_span.start, doc.lang)
-                            {
-                                markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
-                            }
-                            return Some(Hover {
-                                contents: HoverContents::Markup(MarkupContent {
-                                    kind: MarkupKind::Markdown,
-                                    value: markdown,
-                                }),
-                                range: span_to_range(ast, &doc.path, s),
-                            });
-                        }
-                    }
-                }
+            // 2. Check if it matches a symbol (class, interface, enum, typealias, function, process, enum variant)
+            if let Some(h) = render_symbol_by_name(ast, ident, doc.lang, &doc.path, ident_range) {
+                return Some(h);
             }
 
             // 3. Check if we have an inferred type for this ident expression
             if let Some(ty) = doc.expr_types.get(&eid) {
                 let ty_str = format_type(ty, doc.ir_ctx.as_ref(), doc.lang);
-                let markdown = format!("```jc\n{ident}: {ty_str}\n```");
+                let mut markdown = format!("```jc\n{ident}: {ty_str}\n```");
+
+                if let Type::Class(def_id, _) = ty
+                    && let Some(ir_ctx) = &doc.ir_ctx
+                    && let Some(class_info) = ir_ctx.classes_by_def.get(def_id)
+                    && let Some(c) = find_class_decl(ast, &class_info.name)
+                    && let Some((_, src, c_span)) = resolve_ast_span(ast, &c.span)
+                    && let Some(doc_text) = extract_doc_comment(src, c_span.start, doc.lang)
+                {
+                    markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+                }
+
                 return Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
                         kind: MarkupKind::Markdown,
@@ -750,87 +1357,66 @@ fn check_expr_hover(
         }
         Expr::Call(c) => {
             let method = ast.strings.resolve(&c.method);
+            let ident_range = get_ident_range_at_offset(&doc.text, offset, ast, &doc.path);
 
-            // Attempt to resolve method from receiver class type
+            // 1. Attempt to resolve method from receiver class type
             if let Some(Type::Class(def_id, _)) = doc.expr_types.get(&c.target)
                 && let Some(ir_ctx) = &doc.ir_ctx
                 && let Some(class_info) = ir_ctx.classes_by_def.get(def_id)
-                && let Some(method_decl) = class_info.methods.get(method)
             {
-                let (decl_path, src, decl_span) = resolve_ast_span(ast, &method_decl.span)?;
-                let sig = render_function_signature(ast, method_decl);
-                let mut markdown = format!("```jc\n{sig}\n```");
-                let aliases = render_aliases(ast, &method_decl.aliases, doc.lang);
-                markdown.push_str(&aliases);
-
-                if let Some(doc_text) = extract_doc_comment(src, decl_span.start, doc.lang) {
-                    markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
+                if let Some(method_decl) = class_info.methods.get(method) {
+                    return render_function_decl_hover(
+                        ast,
+                        method_decl,
+                        doc.lang,
+                        &doc.path,
+                        ident_range,
+                    );
                 }
-
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: markdown,
-                    }),
-                    range: get_ident_range_at_offset(&doc.text, offset, ast, &doc.path)
-                        .or_else(|| span_to_range(ast, decl_path, &method_decl.span)),
-                });
+                if let Some(proc_decl) = class_info.processes.get(method) {
+                    return render_process_decl_hover(
+                        ast,
+                        proc_decl,
+                        doc.lang,
+                        &doc.path,
+                        ident_range,
+                    );
+                }
+                if let Some(getter_decl) = class_info.getters.get(method) {
+                    return render_function_decl_hover(
+                        ast,
+                        getter_decl,
+                        doc.lang,
+                        &doc.path,
+                        ident_range,
+                    );
+                }
             }
 
-            // Fallback: search function with matching name in AST
-            let mut found_hover = None;
-            walk_statements(&ast.statements, &mut |s| {
-                if found_hover.is_some() {
-                    return;
-                }
-                if let Statement::Function(f) = s {
-                    let f_name = ast.strings.resolve(&f.name);
-                    let short_name = f_name.rsplit("::").next().unwrap_or(f_name);
-                    if short_name == method
-                        && let Some((decl_path, src, decl_span)) = resolve_ast_span(ast, &f.span)
-                    {
-                        let sig = render_function_signature(ast, f);
-                        let mut markdown = format!("```jc\n{sig}\n```");
-                        let aliases = render_aliases(ast, &f.aliases, doc.lang);
-                        markdown.push_str(&aliases);
+            // 2. Constructor call: if method name matches a class
+            if let Some(class_decl) = find_class_decl(ast, method) {
+                return render_class_decl_hover(ast, class_decl, doc.lang, &doc.path, ident_range);
+            }
 
-                        if let Some(doc_text) = extract_doc_comment(src, decl_span.start, doc.lang)
-                        {
-                            markdown.push_str(&format!("\n\n---\n\n{doc_text}"));
-                        }
+            // 3. Fallback: search function with matching name in AST
+            if let Some(func_decl) = find_function_decl(ast, method) {
+                return render_function_decl_hover(
+                    ast,
+                    func_decl,
+                    doc.lang,
+                    &doc.path,
+                    ident_range,
+                );
+            }
 
-                        found_hover = Some(Hover {
-                            contents: HoverContents::Markup(MarkupContent {
-                                kind: MarkupKind::Markdown,
-                                value: markdown,
-                            }),
-                            range: get_ident_range_at_offset(&doc.text, offset, ast, &doc.path)
-                                .or_else(|| span_to_range(ast, decl_path, &f.span)),
-                        });
-                    }
-                }
-            });
-
-            if let Some(h) = found_hover {
-                return Some(h);
+            // 4. Fallback: search process with matching name in AST
+            if let Some(proc_decl) = find_process_decl(ast, method) {
+                return render_process_decl_hover(ast, proc_decl, doc.lang, &doc.path, ident_range);
             }
         }
         _ => {}
     }
 
-    None
-}
-
-fn find_enum_by_name<'a>(ast: &'a Ast, name: &str) -> Option<&'a EnumDecl> {
-    for stmt in &ast.statements {
-        if let Statement::Enum(e) = stmt {
-            let e_name = ast.strings.resolve(&e.name);
-            let short_name = e_name.rsplit("::").next().unwrap_or(e_name);
-            if short_name == name || e_name == name || short_name.eq_ignore_ascii_case(name) {
-                return Some(e);
-            }
-        }
-    }
     None
 }
 

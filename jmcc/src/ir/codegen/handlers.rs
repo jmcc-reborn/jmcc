@@ -47,7 +47,7 @@ fn map_type_to_arg_type(param_name: &str, type_str: &str, _idx: usize) -> ArgTyp
 }
 
 #[tracing::instrument(level = "trace")]
-fn make_param(
+pub(super) fn make_param(
     name: String,
     i: usize,
     is_plural: bool,

@@ -39,10 +39,10 @@ define_language! {
         Num(OrderedFloat<f64>), Bool(bool), Str(StrLit), Var(VarName),
         "let" = Let([Id; 3]),
         "+" = Add([Id; 2]), "-" = Sub([Id; 2]), "*" = Mul([Id; 2]), "/" = Div([Id; 2]), "%" = Mod([Id; 2]), "**" = Pow([Id; 2]),
-        "==" = Eq([Id; 2]), "!=" = Ne([Id; 2]), "<" = Lt([Id; 2]), "<=" = Le([Id; 2]), ">" = Gt([Id; 2]), ">=" = Ge([Id; 2]),
+        "==" = Eq([Id; 2]), "!=" = Ne([Id; 2]), "<" = Lt([Id; 2]), "<=" = Le([Id; 2]), ">" = Gt([Id; 2]), ">=" = Ge([Id; 2]), "in" = In([Id; 2]),
         "&" = BitAnd([Id; 2]), "|" = BitOr([Id; 2]), "^" = BitXor([Id; 2]), "<<" = Shl([Id; 2]), ">>" = Shr([Id; 2]),
         "&&" = And([Id; 2]), "||" = Or([Id; 2]), "!" = Not(Id), "neg" = Neg(Id), "++" = Inc(Id), "--" = Dec(Id),
-        "if" = If([Id; 3]), "while" = While([Id; 2]), "break" = Break, "return" = Return(Id),
+        "if" = If([Id; 3]), "while" = While([Id; 2]), "break" = Break, "continue" = Continue, "return" = Return(Id),
         "list" = List(Box<[Id]>), "map" = Map(Box<[Id]>), "concat" = Concat(Box<[Id]>),
         "index" = Index([Id; 2]), "slice" = Slice([Id; 3]), "text" = Text([Id; 2]), "nbt" = Nbt(Id),
         "ctor" = Ctor(Box<[Id]>), "sel" = Sel(Id), "enum" = Enum(Id), "action" = Action(Box<[Id]>),
@@ -102,6 +102,7 @@ enum ClassMember {
 
 #[derive(Clone)]
 enum FieldAccess {
+    Direct,
     Slot(usize),
     Dict,
 }

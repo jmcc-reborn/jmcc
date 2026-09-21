@@ -1,0 +1,15 @@
+{
+  "name": "Демонстрация многопользовательской симуляции",
+  "description": "Игрок Alice пишет в чат, заходит игрок Bob и кликает по инвентарю",
+  "steps": [
+    { "type": "event", "event": "world_start" },
+    { "type": "add_player", "name": "Alice", "x": 10.0, "y": 64.0, "z": 20.0 },
+    { "type": "event", "event": "player_join", "player": "Alice" },
+    { "type": "event", "event": "player_chat", "player": "Alice", "chat": "@run" },
+    { "type": "assert_log", "contains": "Запуск комплексного теста" },
+    { "type": "add_player", "name": "Bob", "x": 5.0, "y": 64.0, "z": 5.0 },
+    { "type": "event", "event": "player_join", "player": "Bob" },
+    { "type": "event", "event": "player_chat", "player": "Bob", "chat": "@call" },
+    { "type": "assert_log", "contains": "Добро пожаловать!" }
+  ]
+}

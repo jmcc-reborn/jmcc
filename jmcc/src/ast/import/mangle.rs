@@ -44,7 +44,7 @@ impl ImportResolver {
         method_fn: impl Fn(StrId) -> StrId,
     ) {
         let _span = span!(Level::TRACE, "rewrite_calls", candidates = map.len()).entered();
-        let updates: Vec<(ExprId, StrId, std::ops::Range<usize>)> = ast
+        let updates: Vec<(ExprId, StrId, std::ops::Range<usize>, bool)> = ast
             .exprs
             .iter()
             .filter_map(|(id, e)| {
@@ -52,17 +52,20 @@ impl ImportResolver {
                 let Expr::Ident(n, sp) = &ast.exprs[c.target] else {
                     return None;
                 };
-                map.get(n).map(|&new| (id, new, sp.clone()))
+                let is_direct = c.method == *n;
+                map.get(n).map(|&new| (id, new, sp.clone(), is_direct))
             })
             .collect();
 
         trace!(matches = updates.len(), "Found call sites to rewrite");
 
-        for (id, new, sp) in updates {
+        for (id, new, sp, is_direct) in updates {
             let new_id = ast.exprs.alloc(Expr::Ident(new, sp));
             if let Expr::Call(c) = &mut ast.exprs[id] {
                 c.target = new_id;
-                c.method = method_fn(new);
+                if is_direct {
+                    c.method = method_fn(new);
+                }
             }
         }
     }
@@ -97,18 +100,13 @@ fn mangle_stmts(
                     map.insert(*alias, c.name);
                 }
                 let new_prefix = strings.resolve(&c.name).to_owned();
+                let mut method_map = HashMap::new();
                 for s in &mut c.body {
                     if let Statement::Function(f) = s {
-                        mangle_one(&mut f.name, &new_prefix, strings, map);
-                        for alias in &f.aliases {
-                            map.insert(*alias, f.name);
-                        }
+                        mangle_one(&mut f.name, &new_prefix, strings, &mut method_map);
                         mangle_stmts(&mut f.body, prefix, strings, map);
                     } else if let Statement::Process(p) = s {
-                        mangle_one(&mut p.name, &new_prefix, strings, map);
-                        for alias in &p.aliases {
-                            map.insert(*alias, p.name);
-                        }
+                        mangle_one(&mut p.name, &new_prefix, strings, &mut method_map);
                         mangle_stmts(&mut p.body, prefix, strings, map);
                     }
                 }
@@ -146,12 +144,10 @@ fn mangle_stmts(
                     map.insert(*alias, i.name);
                 }
                 let new_prefix = strings.resolve(&i.name).to_owned();
+                let mut method_map = HashMap::new();
                 for s in &mut i.body {
                     if let Statement::Function(f) = s {
-                        mangle_one(&mut f.name, &new_prefix, strings, map);
-                        for alias in &f.aliases {
-                            map.insert(*alias, f.name);
-                        }
+                        mangle_one(&mut f.name, &new_prefix, strings, &mut method_map);
                         mangle_stmts(&mut f.body, prefix, strings, map);
                     }
                 }

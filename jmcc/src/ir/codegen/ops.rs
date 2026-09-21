@@ -42,6 +42,7 @@ impl CodeGen {
             // — end the whole thread — which is what `code::break()` calls; the
             // keyword is not that.
             Mir::Break => ops.push(Op::code_stop_repeat()),
+            Mir::Continue => ops.push(Op::code_skip_iteration()),
             Mir::ReturnFunc(_) => ops.push(Op::code_return_function()),
             Mir::Nop => {}
             _ => {

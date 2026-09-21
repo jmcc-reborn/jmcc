@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use jmcc::{CompileOptions, compile_file};
-use jmcdata::generated::ArgType;
-use jmcdata::module::{LineValue, Value};
+use jmcdata::generated::{ActionId, ArgType};
+use jmcdata::module::{LineValue, Op, Value};
 
 fn fixture_path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -251,7 +251,7 @@ fn test_edition_2026_return_ret_param() {
     );
 
     if let Some(h) = helper_fn
-        && let LineValue::Fn { ref values, .. } = h.line_value
+        && let LineValue::Fn { values, .. } = &h.line_value
     {
         // In edition 2026, the first parameter in "parameters" array should be `ret` with type `ArgType::Variable`
         let params_val = values
@@ -294,7 +294,7 @@ fn test_edition_2023_return_protocol() {
 
     // In edition 2023, functions should not have synthetic `ret` parameter
     for h in &module.handlers {
-        if let LineValue::Fn { ref values, .. } = h.line_value
+        if let LineValue::Fn { values, .. } = &h.line_value
             && let Some(Value::Array { values: param_list }) = values.get("parameters")
         {
             for param in param_list.iter().flatten() {
@@ -454,7 +454,7 @@ fn test_diagnostics_unknown_action_suggestion() {
     let err = compile_file(&file, &test_options(2026, 2))
         .unwrap_err()
         .to_string();
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(std::fs::remove_dir_all(&dir));
     assert!(
         err.contains("Unknown action 'player::play_sond'"),
         "Error should report unknown action: {err}"
@@ -480,7 +480,7 @@ fn test_diagnostics_not_iterable() {
     let err = compile_file(&file, &test_options(2026, 2))
         .unwrap_err()
         .to_string();
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(std::fs::remove_dir_all(&dir));
     assert!(
         err.contains("is not iterable in 'for' loop"),
         "Error should report not iterable: {err}"
@@ -506,7 +506,7 @@ fn test_diagnostics_unknown_method_suggestion() {
     let err = compile_file(&file, &test_options(2026, 2))
         .unwrap_err()
         .to_string();
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(std::fs::remove_dir_all(&dir));
     assert!(
         err.contains("Unknown method 'lengh'"),
         "Error should report unknown method: {err}"
@@ -558,7 +558,7 @@ fn test_compile_compound_assign() {
     .unwrap();
     let module = compile_file(&file, &test_options(2026, 2))
         .expect("Failed to compile compound assign with text, array, and number");
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(std::fs::remove_dir_all(&dir));
     assert!(!module.handlers.is_empty(), "module should have handlers");
 }
 
@@ -614,17 +614,247 @@ fn test_action_limit_splitting_long_function() {
         "Expected NO split handlers when disable_action_limit is true"
     );
 
-    let _ = std::fs::remove_dir_all(&dir);
+    drop(std::fs::remove_dir_all(&dir));
 }
 
 #[test]
 fn test_max_handlers_limit_warning() {
-    let file = fixture_path("cubed.jc");
-    let options = test_options(2023, 2);
-    let module = compile_file(&file, &options)
-        .expect("Compilation must succeed with warning on max handlers");
+    run_large_test(|| {
+        let file = fixture_path("cubed.jc");
+        let options = test_options(2023, 2);
+        let module = compile_file(&file, &options)
+            .expect("Compilation must succeed with warning on max handlers");
+        assert!(
+            module.handlers.len() > jmcdata::consts::MAX_HANDLERS as usize,
+            "cubed.jc has > 345 handlers"
+        );
+    });
+}
+
+#[test]
+fn test_action_limit_splitting_dynamic_placeholders() {
+    let dir = std::env::temp_dir().join(format!(
+        "jmcc_split_dyn_test_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("dyn_split_func.jc");
+
+    let mut code = String::from("function test_dyn_split() {\n");
+    code.push_str("    line var key = \"foo\";\n");
+    code.push_str("    `item_%var_line(key)` = 42;\n");
+    for i in 0..45 {
+        code.push_str(&format!("    line var v{i} = {i};\n"));
+    }
+    code.push_str("    line var res = `item_%var_line(key)`;\n");
+    code.push_str("}\n");
+    std::fs::write(&file, &code).unwrap();
+
+    let mut options = test_options(2026, 0);
+    options.disable_action_limit = false;
+    let module =
+        compile_file(&file, &options).expect("Compile dynamic placeholder function with splitting");
+
+    // Verify split occurred
+    let split_fn = module
+        .handlers
+        .iter()
+        .find(|h| {
+            if let LineValue::Fn { name, .. } = &h.line_value {
+                name.starts_with("jmcc.")
+            } else {
+                false
+            }
+        })
+        .expect("Expected split handler jmcc.N");
+
+    // Verify split function has va_args parameter
+    if let LineValue::Fn { values, .. } = &split_fn.line_value {
+        let params = values.get("parameters").expect("Must have parameters");
+        let params_json = serde_json::to_string(params).unwrap();
+        assert!(
+            params_json.contains("va_args"),
+            "va_args should be in parameters: {params_json}"
+        );
+    } else {
+        panic!("Not a Fn");
+    }
+
+    fn find_action<'a>(ops: &'a [Op<'_>], action: ActionId) -> Option<&'a Op<'a>> {
+        for op in ops {
+            if op.action == action {
+                return Some(op);
+            }
+            if let Some(inner) = &op.operations
+                && let Some(found) = find_action(inner, action)
+            {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    // Verify split function begins with unpack loop (RepeatForEachMapEntry)
+    assert!(!split_fn.operations.is_empty());
     assert!(
-        module.handlers.len() > jmcdata::consts::MAX_HANDLERS as usize,
-        "cubed.jc has > 345 handlers"
+        find_action(&split_fn.operations, ActionId::RepeatForEachMapEntry).is_some(),
+        "Continuation should have unpack loop"
     );
+
+    // Verify caller function test_dyn_split packs va_args and calls split function
+    let caller_fn = module
+        .handlers
+        .iter()
+        .find(|h| {
+            if let LineValue::Fn { name, .. } = &h.line_value {
+                name.ends_with("test_dyn_split")
+            } else {
+                false
+            }
+        })
+        .expect("Expected caller function test_dyn_split");
+
+    assert!(
+        find_action(&caller_fn.operations, ActionId::SetVariableGetListVariables).is_some(),
+        "Caller must have SetVariableGetListVariables"
+    );
+
+    assert!(
+        find_action(&caller_fn.operations, ActionId::RepeatForEachInList).is_some(),
+        "Caller must have RepeatForEachInList to pack dynamic variables"
+    );
+
+    let call_op = find_action(&caller_fn.operations, ActionId::CallFunction)
+        .expect("Caller must have CallFunction");
+
+    let call_json = serde_json::to_string(call_op).unwrap();
+    assert!(
+        call_json.contains("va_args"),
+        "CallFunction args must include va_args"
+    );
+
+    drop(std::fs::remove_dir_all(&dir));
+}
+
+#[test]
+fn test_static_methods_action_syntax() {
+    let dir = std::env::temp_dir().join(format!(
+        "jmcc_test_static_action_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("static_action.jc");
+
+    let code = r#"
+event<player_join> {
+    var player_name = value::name<current>;
+    player::message("Добро пожаловать на сервер, ${player_name}!");
+    var sum = Test::Sum(1, 5);
+    player::message("sum: ${sum}");
+}
+
+class Test {
+    function Sum(a: number, b: number) -> number {
+        return a + b;
+    }
+}
+"#;
+    std::fs::write(&file, code).unwrap();
+
+    let module_2026 = compile_file(&file, &test_options(2026, 2))
+        .expect("Failed to compile static method action syntax in Edition 2026");
+    assert!(
+        !module_2026.handlers.is_empty(),
+        "module should have handlers in Edition 2026"
+    );
+
+    let module_2023 = compile_file(&file, &test_options(2023, 2))
+        .expect("Failed to compile static method action syntax in Edition 2023");
+    assert!(
+        !module_2023.handlers.is_empty(),
+        "module should have handlers in Edition 2023"
+    );
+
+    drop(std::fs::remove_dir_all(&dir));
+}
+
+#[test]
+fn test_static_methods_dot_syntax() {
+    let dir = std::env::temp_dir().join(format!(
+        "jmcc_test_static_dot_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("static_dot.jc");
+
+    let code = r#"
+event<player_join> {
+    var sum = Test.Sum(10, 20);
+    player::message("sum: ${sum}");
+}
+
+class Test {
+    function Sum(a: number, b: number) -> number {
+        return a + b;
+    }
+}
+"#;
+    std::fs::write(&file, code).unwrap();
+
+    let module_2026 = compile_file(&file, &test_options(2026, 2))
+        .expect("Failed to compile static method dot syntax in Edition 2026");
+    assert!(!module_2026.handlers.is_empty());
+
+    let module_2023 = compile_file(&file, &test_options(2023, 2))
+        .expect("Failed to compile static method dot syntax in Edition 2023");
+    assert!(!module_2023.handlers.is_empty());
+
+    drop(std::fs::remove_dir_all(&dir));
+}
+
+#[test]
+fn test_static_inline_methods() {
+    let dir = std::env::temp_dir().join(format!(
+        "jmcc_test_static_inline_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("static_inline.jc");
+
+    let code = r#"
+event<player_join> {
+    var s1 = MathUtils::Add(3, 4);
+    var s2 = MathUtils.Add(10, 20);
+    player::message("${s1} and ${s2}");
+}
+
+class MathUtils {
+    inline function Add(a: number, b: number) -> number {
+        return a + b;
+    }
+}
+"#;
+    std::fs::write(&file, code).unwrap();
+
+    let module_2026 = compile_file(&file, &test_options(2026, 2))
+        .expect("Failed to compile static inline methods in Edition 2026");
+    assert!(!module_2026.handlers.is_empty());
+
+    let module_2023 = compile_file(&file, &test_options(2023, 2))
+        .expect("Failed to compile static inline methods in Edition 2023");
+    assert!(!module_2023.handlers.is_empty());
+
+    drop(std::fs::remove_dir_all(&dir));
 }

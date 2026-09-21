@@ -57,14 +57,14 @@ var math1 = 1 + 2 - 3 * 4 / 5 % 6 ^ 2;
 var math2 = abs(-5) + sqrt(16) + cbrt(27) + ceil(1.2) + floor(1.8) + sin(0) + cos(0) + round(1.5, 1);
 
 // Тест min, max, pow (требуют тип variable в качестве первого аргумента)
-local var min_test: number = 5;
+var min_test: number = 5;
 min_test = min_test.min([1, 2, 3]);
-local var max_test: number = 0;
+var max_test: number = 0;
 max_test = max_test.max([1, 2, 3]);
 
 // Тест возведения в степень (используем оператор ^ или инлайн переменные)
-local var pow_base = 2;
-local var pow_res = pow_base ^ 3;
+var pow_base = 2;
+var pow_res = pow_base ^ 3;
 var math3 = pow_res + min_test + max_test;
 
 // Операторы присваивания
@@ -88,14 +88,19 @@ str_test[0:2] = "XY";
 player::message<all_players>("Hello", merging = "SEPARATE_LINES");
 player::message("SEPARATE_LINES", messages = "Overridden");
 
-function math_add(first: number, second: number = 1) -> number {
+@overload
+function math_add(first: text, second: text) -> text;
+
+function math_add(first: any, second: any = 1) -> any {
+  if (first.is_type("TEXT")) {
+    return "${first}${second}";
+  }
   return variable::add([first, second]);
 }
 
-/*@overload
-function math_add(first: text, second: text) -> text {
-  return "$first$second";
-}*/
+function generic_identity<T>(val: T) -> T {
+  return val;
+}
 
 inline function inline_pow(base: number, exp: number) -> number {
   return base ^ exp; // Возврат инлайн математики через оператор
@@ -109,6 +114,31 @@ function append_to_list(ref arr_ref: array, value: any) {
   arr_ref.append_value(value);
 }
 
+function classify_number(n: number) -> text {
+  return match n {
+    0 => "zero",
+    1 | 2 | 3 => "small",
+    _ if n > 100 => "huge",
+    _ => "other",
+  };
+}
+
+function test_try_catch() {
+  try {
+    throw ERROR "custom_error_message";
+    player::message("Unreachable after throw");
+  } catch (err) {
+    player::message(["Caught expected error:", err]);
+  }
+}
+
+функция тест_русского(вход: number) -> text {
+  если (вход > 0) {
+    вернуть "положительное";
+  } иначе {
+    вернуть "неположительное";
+  }
+}
 
 @hidden
 function menu_func(first: number, second: number) -> number {
@@ -120,6 +150,9 @@ process async_task() {
   player::message<all>("Процесс выполнен");
 }
 
+interface Describable {
+  function describe(self: Describable) -> text;
+}
 
 class Vector2D {
   var x: number;
@@ -132,24 +165,28 @@ class Vector2D {
   }
   
   function get_length(self: Vector2D) -> number {
-    local var x_sq = self.x ^ 2;
-    local var y_sq = self.y ^ 2;
-    local var sum_xy = variable::add([x_sq, y_sq]);
+    var x_sq = self.x ^ 2;
+    var y_sq = self.y ^ 2;
+    var sum_xy = variable::add([x_sq, y_sq]);
     return sum_xy ^ 0.5;
   }
 }
 
-class Vector2DEx(Vector2D) {
+class Vector2DEx extends Vector2D implements Describable {
   var z: number;
 
   function __add__(first: Vector2DEx, second: Vector2DEx) -> Vector2DEx {
     return Vector2D(first.x + second.x, first.y + second.y) as Vector2DEx;
   }
+
+  function describe(self: Vector2DEx) -> text {
+    return "Vector2DEx(${self.x}, ${self.y})";
+  }
 }
 
 function test_logic() {
-  local var a = 1;
-  local var b = 2;
+  var a = 1;
+  var b = 2;
   
   if (a.equals(1)) {
     player::message("A = 1");
@@ -163,13 +200,13 @@ function test_logic() {
   
   if not (a.greater(5)) { player::message("A <= 5"); }
   
-  local var bool_logic = a.exists() and b.exists() or not a.exists();
+  var bool_logic = a.exists() and b.exists() or not a.exists();
   
   // Тернарные операторы (4 вида)
-  local var ter1 = if a.equals(1) 10 else 20;
-  local var ter2 = 10 if a.equals(1) else 20;
+  var ter1 = if a.equals(1) 10 else 20;
+  var ter2 = 10 if a.equals(1) else 20;
   if a.equals(1) ter1 = 10 else ter1 = 20;
-  local var ter3 = a.equals(1) ? 10 : 20;
+  var ter3 = a.equals(1) ? 10 : 20;
   
   // Циклы
   repeat::forever() {
@@ -201,6 +238,123 @@ function test_logic() {
   repeat::on_circle(circlepos, location(0,0,0), 1.0, 20.0, vector(0,1,0), 0.0) {
     player::display_particle([particle("FLAME", 1, 0, 0, 0, 0, 0)], [circlepos]);
   }
+  
+  test_advanced_features();
+}
+
+function test_advanced_features() {
+  // Тест continue и break с метками
+  'outer: for i in [1, 2, 3] {
+    for j in [10, 20, 30] {
+      if (j.equals(20)) {
+        continue;
+      }
+      if (i.equals(2) and j.equals(30)) {
+        continue 'outer;
+      }
+      if (i.equals(3) and j.equals(30)) {
+        break 'outer;
+      }
+      player::message(["Nested loop item:", i, j]);
+    }
+  }
+
+  var while_cnt = 0;
+  while (while_cnt < 5) {
+    while_cnt += 1;
+    if (while_cnt == 2) {
+      continue;
+    }
+  }
+
+  // Тест анонимных функций (лямбд)
+  var add_lambda = (x: number, y: number) => x + y;
+  var lambda_calc = add_lambda(15, 25);
+  player::message(["Lambda result:", lambda_calc]);
+
+  var block_lambda = (val: number) => {
+    var multiplied = val * 3;
+    return multiplied + 1;
+  };
+  player::message(["Block lambda result:", block_lambda(10)]);
+
+  // Тест тернарника с бинарным условием
+  var tern_bin = (1 > 0) ? 100 : 200;
+  player::message(["Ternary with binary condition:", tern_bin]);
+
+  // Тест обращения к переменной с именем 'item'
+  var item = item("minecraft:diamond_sword", count=1);
+  if (item.is_type("ITEM")) {
+    player::message("Variable 'item' method calls work properly");
+  }
+
+  // Тест отсутствующего ключа словаря (равенство 0)
+  var absent_map: map = {"exists": 1};
+  var missing_v = absent_map["not_exists"];
+  if (missing_v == 0) {
+    player::message("Absent map key equals 0");
+  }
+
+  // Тест сопоставления с образцом (match)
+  var m1 = classify_number(2);
+  var m2 = classify_number(500);
+  player::message(["Match results:", m1, m2]);
+
+  // Тест try / catch и throw
+  test_try_catch();
+
+  // Тест русской лексики и ключевых слов
+  var ru_res = тест_русского(10);
+  player::message(["Russian syntax result:", ru_res]);
+
+  // Тест оператора in на коллекциях
+  test_in_operator();
+
+  // Тест превышения лимита в 50 действий (разбиение функции компилятором на jmcc.n)
+  test_line_split_limit(999);
+}
+
+function test_in_operator() {
+  var arr = [1, 2, 3];
+  if (2 in arr) {
+    player::message("IN_ARRAY_SUCCESS");
+  }
+  var m: map = {"key": 10};
+  if ("key" in m) {
+    player::message("IN_MAP_SUCCESS");
+  }
+  var s = "foobar";
+  if ("bar" in s) {
+    player::message("IN_TEXT_SUCCESS");
+  }
+  if (5 in 1..10) {
+    player::message("IN_RANGE_SUCCESS");
+  }
+  if (10 in 1..=10) {
+    player::message("IN_RANGE_INC_SUCCESS");
+  }
+}
+
+// Функция с более чем 50 действиями для проверки потери контекста строчных переменных при сплите
+function test_line_split_limit(init_val: number) {
+  var tracked_before_split = init_val;
+  var d = 0;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  d += 1; d += 1; d += 1; d += 1; d += 1;
+  if (tracked_before_split.equals(0)) {
+    player::message("LINE_SPLIT_ERROR_CONTEXT_LOST");
+  } else {
+    player::message(["LINE_SPLIT_SUCCESS:", tracked_before_split]);
+  }
 }
 
 event<player_join> {
@@ -208,7 +362,7 @@ event<player_join> {
   player::message<all>("Добро пожаловать!", merging = "SEPARATE_LINES");
   
   // Тест сложного NBT
-  local var custom_item = item("minecraft:player_head", nbt=m{
+  var custom_item = item("minecraft:player_head", nbt=m{
     "minecraft:profile": {name:"", properties:[{name:"textures", value:"eyJ0ZXh0dXJlcyI6eyJTS0lOIjp7InVybCI6Imh0dHA6Ly90ZXh0dXJlcy5taW5lY3JhZnQubmV0L3RleHR1cmUvYzYzNzA0YTdmYzdkNDM3ZjdiOTIzZTIzZTlhMDhhZTNiYmUyODkzN2RmNGRhZmE5ZTNlODcyNWIyY2U0YWZhNSJ9fX0="}]},
     "minecraft:custom_name": {extra:[{italic:0b, color:"blue", text:"Test Head"}], text:""}
   });
@@ -216,17 +370,28 @@ event<player_join> {
   player::give_items([custom_item]);
   
   // Тест вызова перегруженных функций
-  local var add_num = math_add(1, 2); // 3
-  // local var add_txt = math_add("1", "2"); // "12"
+  var add_num = math_add(1, 2); // 3
+  var add_txt = math_add("1", "2"); // "12"
+  player::message(["Add text:", add_txt]);
   
-  // Тест ООП
-  local var vec1 = Vector2DEx(3, 4);
-  local var vec2 = Vector2DEx(1, 2);
-  local var vec3 = vec1 + vec2;
+  // Тест вызова обобщённых функций (дженериков)
+  var gen_num = generic_identity(42);
+  var gen_txt = generic_identity("generic_identity_works");
+  player::message(["Generic identity:", gen_num, gen_txt]);
+
+  // Тест ООП и интерфейсов
+  var vec1 = Vector2DEx(3, 4);
+  var vec2 = Vector2DEx(1, 2);
+  var vec3 = vec1 + vec2;
   player::message(["Vec length:", vec1.get_length()]);
+  player::message(["Vec description:", vec1.describe()]);
+  
+  // Вызов логики расширенных проверок
+  test_logic();
+  test_line_split_limit(999);
   
   // Тест перегрузки стандартного класса
-  local var rep_text = ("ab" * 3);
+  var rep_text = ("ab" * 3);
   player::message(rep_text);
   
   // Тест *args и **kwargs
@@ -251,8 +416,8 @@ event<player_chat> {
   
   // Тест динамического вызова функций
   if (player::chat_message_equals("@call")) {
-    local var func_name = "math_add";
-    local var res = code::call_function(func_name, {"first": 10, "second": 5, "return_variable": 0});
+    var func_name = "math_add";
+    var res = code::call_function(func_name, {"first": 10, "second": 5, "return_variable": 0});
   }
 }
 
@@ -260,12 +425,12 @@ event<player_click_inventory> {
   if (value::open_inventory_title<default>.equals(["TestGUI"])) {
     world::cancel_event();
     
-    local var clicked_item = value::event_item;
+    var clicked_item = value::event_item;
     
     // Тест методов предметов
     if (clicked_item.is_type("ITEM")) {
-      local var item_name = clicked_item.get_item_name();
-      local var item_lore = clicked_item.get_item_lore_line(0.0);
+      var item_name = clicked_item.get_item_name();
+      var item_lore = clicked_item.get_item_lore_line(0.0);
       
       clicked_item = clicked_item.set_item_custom_tag("test_tag", "test_value");
       clicked_item = clicked_item.set_item_lore_line("&aNew Lore", 1.0);

@@ -343,6 +343,7 @@ pub struct TestAttribute {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDecl {
     pub name: StrId,
+    pub generics: Vec<StrId>,
     pub params: Vec<Param>,
     pub return_type: Option<StrId>,
     pub body: Vec<Statement>,
@@ -350,6 +351,7 @@ pub struct FunctionDecl {
     pub is_exported: bool,
     pub is_getter: bool,
     pub is_setter: bool,
+    pub is_overload: bool,
     pub aliases: Vec<StrId>,
     pub test_attr: Option<TestAttribute>,
     pub span: Span,
@@ -515,6 +517,12 @@ pub struct BreakStmt {
     pub span: Span,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContinueStmt {
+    pub label: Option<StrId>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
     Import(ImportStmt),
@@ -528,6 +536,7 @@ pub enum Statement {
     While(WhileStmt),
     For(ForStmt),
     Break(BreakStmt),
+    Continue(ContinueStmt),
     VarDecl(VarDecl),
     Assign(AssignStmt),
     Return(ReturnStmt),

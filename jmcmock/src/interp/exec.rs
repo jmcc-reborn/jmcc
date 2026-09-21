@@ -95,6 +95,82 @@ impl<'a> Runtime<'a> {
         }
         let args = Args::of_condition(op, condition);
         match condition {
+            ActionId::IfGameEventIsCanceled => Ok(self.world().is_event_cancelled()),
+            ActionId::IfPlayerGamemodeEquals => {
+                let target = self.primary(stream)?;
+                let Target::Player(idx) = target else {
+                    return Ok(false);
+                };
+                let expected = self.optional_enum_arg(stream, args, "gamemode")?;
+                let actual = self
+                    .world()
+                    .players()
+                    .get(idx)
+                    .map(|p| p.game_mode.as_str());
+                Ok(expected.is_some() && expected == actual)
+            }
+            ActionId::IfPlayerNameEquals => {
+                let target = self.primary(stream)?;
+                let names = self.values_arg(stream, args, "names_or_uuids")?;
+                let name = self.world().target_name(target);
+                let uuid = self.world().target_uuid(target);
+                Ok(names.iter().any(|val| {
+                    let s = value::display(val);
+                    s.eq_ignore_ascii_case(&name) || s.eq_ignore_ascii_case(uuid)
+                }))
+            }
+            ActionId::IfPlayerIsFlying => {
+                let target = self.primary(stream)?;
+                let Target::Player(idx) = target else {
+                    return Ok(false);
+                };
+                Ok(self.world().players().get(idx).is_some_and(|p| p.is_flying))
+            }
+            ActionId::IfPlayerIsSneaking => {
+                let target = self.primary(stream)?;
+                let Target::Player(idx) = target else {
+                    return Ok(false);
+                };
+                Ok(self
+                    .world()
+                    .players()
+                    .get(idx)
+                    .is_some_and(|p| p.is_sneaking))
+            }
+            ActionId::IfPlayerIsSprinting => {
+                let target = self.primary(stream)?;
+                let Target::Player(idx) = target else {
+                    return Ok(false);
+                };
+                Ok(self
+                    .world()
+                    .players()
+                    .get(idx)
+                    .is_some_and(|p| p.is_sprinting))
+            }
+            ActionId::IfPlayerIsGliding => {
+                let target = self.primary(stream)?;
+                let Target::Player(idx) = target else {
+                    return Ok(false);
+                };
+                Ok(self
+                    .world()
+                    .players()
+                    .get(idx)
+                    .is_some_and(|p| p.is_gliding))
+            }
+            ActionId::IfGameBlockEquals => {
+                let [x, y, z, _, _] = self.location_arg(stream, args, "location")?;
+                let expected = self.values_arg(stream, args, "blocks")?;
+                #[expect(clippy::cast_possible_truncation, reason = "block coordinates")]
+                let current = self
+                    .world()
+                    .block_at(x as i64, y as i64, z as i64)
+                    .unwrap_or("air");
+                Ok(expected
+                    .iter()
+                    .any(|b| value::display(b).eq_ignore_ascii_case(current)))
+            }
             ActionId::IfPlayerChatMessageEquals => {
                 let actual = crate::text::strip_legacy_codes(&stream.chat_message);
                 Ok(self

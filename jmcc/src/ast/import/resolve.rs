@@ -130,7 +130,27 @@ impl ImportResolver {
         } else {
             std::fs::read_to_string(&canon).map_err(|e| {
                 error!(error = %e, path = %canon.display(), "Failed to read file");
-                JmccError::Generic(format!("Failed to read file '{}': {}", canon.display(), e))
+                let suggestion = if !path.starts_with("std") {
+                    let rel_path = path.strip_prefix(&self.root_dir).unwrap_or(path);
+                    let std_cand1 = self.std_lib_dir.join("std").join(rel_path);
+                    let std_cand2 = self.std_lib_dir.join(rel_path);
+                    if std_cand1.exists()
+                        || std_cand1.with_extension("jc").exists()
+                        || std_cand2.exists()
+                        || std_cand2.with_extension("jc").exists()
+                    {
+                        format!(" (did you mean 'std/{}'?)", rel_path.display())
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+                JmccError::Generic(format!(
+                    "Failed to read file '{}': {}{suggestion}",
+                    canon.display(),
+                    e
+                ))
             })?
         };
         trace!(bytes = src.len(), "File read");

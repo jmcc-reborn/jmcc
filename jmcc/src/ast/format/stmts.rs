@@ -70,6 +70,14 @@ impl Formatter<'_> {
                     self.w("break;");
                 }
             }
+            Statement::Continue(c) => {
+                self.ind();
+                if let Some(lbl) = c.label {
+                    self.w(&format!("continue '{};", self.r(lbl)));
+                } else {
+                    self.w("continue;");
+                }
+            }
             Statement::VarDecl(v) => {
                 self.fmt_var_decl(v);
                 self.w(";");

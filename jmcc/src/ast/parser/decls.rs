@@ -9,6 +9,7 @@ struct ExportModifiers {
     is_setter: bool,
     lang_item: bool,
     is_dict: bool,
+    is_overload: bool,
     aliases: Vec<StrId>,
     test_attr: Option<TestAttribute>,
 }
@@ -39,6 +40,7 @@ impl Parser<'_> {
         let mut is_setter = false;
         let mut lang_item = false;
         let mut is_dict = false;
+        let mut is_overload = false;
         let mut aliases = Vec::new();
         let mut is_test = false;
         let mut should_panic = false;
@@ -54,6 +56,7 @@ impl Parser<'_> {
             match name_str {
                 "getter" | "геттер" => is_getter = true,
                 "setter" | "сеттер" => is_setter = true,
+                "overload" | "перегрузка" => is_overload = true,
                 "lang_item" | "языковой_элемент" => {
                     // The optional decorator argument does not affect semantic analysis.
                     if self.eat(Token::LParen) {
@@ -107,6 +110,7 @@ impl Parser<'_> {
                 is_setter,
                 lang_item,
                 is_dict,
+                is_overload,
                 aliases,
                 test_attr,
             });
@@ -121,9 +125,14 @@ impl Parser<'_> {
 
         match self.curr_token() {
             Some(Token::Import) => self.parse_import_stmt(),
-            Some(Token::Function | Token::Fun | Token::Def) => {
-                self.parse_function_decl(false, is_getter, is_setter, aliases, test_attr)
-            }
+            Some(Token::Function | Token::Fun | Token::Def) => self.parse_function_decl(
+                false,
+                is_getter,
+                is_setter,
+                is_overload,
+                aliases,
+                test_attr,
+            ),
             Some(Token::Process) => self.parse_process_stmt(aliases),
             Some(Token::Event) => self.parse_event_stmt(),
             Some(Token::Class) => self.parse_class_stmt(false, lang_item, is_dict, aliases),
@@ -137,7 +146,7 @@ impl Parser<'_> {
             Some(Token::Try) => self.parse_try_catch_stmt(),
             Some(Token::Throw) => self.parse_throw_stmt(),
             Some(Token::Break) => self.parse_break_stmt(),
-            Some(Token::Return)
+            Some(Token::Return | Token::Continue)
                 if self.edition < 2026
                     && matches!(
                         self.peek_token(),
@@ -155,6 +164,7 @@ impl Parser<'_> {
                 self.parse_var_decl_or_expr_stmt()
             }
             Some(Token::Return) => self.parse_return_stmt(),
+            Some(Token::Continue) => self.parse_continue_stmt(),
             Some(Token::Inline)
                 if matches!(
                     self.peek_token(),
@@ -162,7 +172,14 @@ impl Parser<'_> {
                 ) =>
             {
                 self.bump();
-                self.parse_function_decl(true, is_getter, is_setter, aliases, test_attr)
+                self.parse_function_decl(
+                    true,
+                    is_getter,
+                    is_setter,
+                    is_overload,
+                    aliases,
+                    test_attr,
+                )
             }
             Some(Token::Inline) if matches!(self.peek_token(), Some(Token::Class)) => {
                 self.bump();
@@ -202,6 +219,7 @@ impl Parser<'_> {
                 is_inline,
                 modifiers.is_getter,
                 modifiers.is_setter,
+                modifiers.is_overload,
                 modifiers.aliases,
                 modifiers.test_attr,
             )?,
@@ -330,18 +348,24 @@ impl Parser<'_> {
     }
 
     #[instrument(
-        skip(self, is_inline, is_getter, is_setter, aliases, test_attr),
+        skip(self, is_inline, is_getter, is_setter, is_overload, aliases, test_attr),
         level = "trace"
+    )]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "declaration flags are parsed independently from decorators and keywords"
     )]
     fn parse_function_decl(
         &mut self,
         is_inline: bool,
         is_getter: bool,
         is_setter: bool,
+        is_overload: bool,
         aliases: Vec<StrId>,
         test_attr: Option<TestAttribute>,
     ) -> Result<Statement> {
         let (start_span, name) = self.parse_decl_name()?;
+        let generics = self.parse_generics()?;
         let params = self.parse_paren_params()?;
         let return_type = self.parse_optional_type(Token::Arrow)?;
         let body = if self.eat(Token::Semicolon) {
@@ -352,6 +376,7 @@ impl Parser<'_> {
         let end_span = self.last_span().end;
         Ok(Statement::Function(FunctionDecl {
             name,
+            generics,
             params,
             return_type,
             body,
@@ -359,6 +384,7 @@ impl Parser<'_> {
             is_exported: false,
             is_getter,
             is_setter,
+            is_overload,
             aliases,
             test_attr,
             span: start_span.start..end_span,
@@ -438,7 +464,9 @@ impl Parser<'_> {
         let (start_span, name) = self.parse_decl_name()?;
         let generics = self.parse_generics()?;
 
-        let parent = if self.eat(Token::LParen) {
+        let parent = if self.eat(Token::Extends) {
+            Some(self.parse_ident_str()?)
+        } else if self.eat(Token::LParen) {
             let p = self.parse_ident_str()?;
             self.expect(Token::RParen)?;
             Some(p)

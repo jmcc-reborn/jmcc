@@ -566,6 +566,16 @@ pub fn expect_location(value: &Value<'_>, context: &str) -> Result<[f64; 5]> {
             yaw,
             pitch,
         } => Ok([x.0, y.0, z.0, yaw.0, pitch.0]),
+        Value::Array { values } => {
+            if let Some(Some(first)) = values.first() {
+                expect_location(first, context)
+            } else {
+                Err(RuntimeError::NotALocation {
+                    context: context.to_owned(),
+                    actual: "an empty array".to_owned(),
+                })
+            }
+        }
         _ => Err(RuntimeError::NotALocation {
             context: context.to_owned(),
             actual: kind(value),
@@ -778,8 +788,25 @@ pub fn equals(left: &Rt<'_>, right: &Rt<'_>) -> bool {
         if let (Some(a), Some(b)) = (as_text(a), as_text(b)) {
             return a == b;
         }
+        return a == b;
     }
-    left == right
+    if left.is_none() && right.is_none() {
+        return true;
+    }
+    let non_empty = if let Some(a) = left {
+        a
+    } else if let Some(b) = right {
+        b
+    } else {
+        return true;
+    };
+    if as_number(non_empty) == Some(0.0) {
+        return true;
+    }
+    if let Some(t) = as_text(non_empty) {
+        return t.is_empty();
+    }
+    false
 }
 
 /// The text representation of a value for messages and comparisons. For an

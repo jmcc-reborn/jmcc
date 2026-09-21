@@ -79,6 +79,7 @@ impl<'a> Runtime<'a> {
     ///
     /// Returns [`RuntimeError::UnimplementedSelection`] for an unrecognized
     /// selection and [`RuntimeError::Unimplemented`] for an unrecognized value.
+    #[expect(clippy::too_many_lines, reason = "Game value evaluation dispatch")]
     #[tracing::instrument(level = "debug", skip(self, stream), fields(id = ?id, selection = %selection))]
     fn game_value(
         &mut self,
@@ -105,7 +106,9 @@ impl<'a> Runtime<'a> {
             });
         }
         let value = match id {
-            GameValueId::EventChatMessage => value::text(stream.chat_message.clone()),
+            GameValueId::EventChatMessage | GameValueId::EventMessage => {
+                value::text(stream.chat_message.clone())
+            }
             GameValueId::EventItem => return Ok(stream.event_item.clone()),
             GameValueId::EventSlot => value::number(stream.event_slot),
             GameValueId::OpenInventoryTitle => value::text(stream.inventory_title.clone()),
@@ -152,25 +155,24 @@ impl<'a> Runtime<'a> {
                             .player_mut(index)
                             .map_or(0.0, |player| player.health),
                     ),
-                    Target::Entity(_) => {
-                        self.unimplemented("the game value 'current_health' of an entity")?;
-                        return Ok(None);
-                    }
+                    Target::Entity(index) => value::number(
+                        self.world_mut()
+                            .entity_mut(index)
+                            .map_or(0.0, |entity| entity.health),
+                    ),
                 }
             }
-            // A player's ceiling is full health, and the mock's players never
-            // absorb anything: both are part of the world model, not of the
-            // event being played.
             GameValueId::MaxHealth => match self.primary(stream)? {
                 Target::Player(index) => value::number(
                     self.world_mut()
                         .player_mut(index)
                         .map_or(0.0, |player| player.max_health),
                 ),
-                Target::Entity(_) => {
-                    self.unimplemented("the game value 'max_health' of an entity")?;
-                    return Ok(None);
-                }
+                Target::Entity(index) => value::number(
+                    self.world_mut()
+                        .entity_mut(index)
+                        .map_or(0.0, |entity| entity.max_health),
+                ),
             },
             GameValueId::AbsorptionHealth => match self.primary(stream)? {
                 Target::Player(index) => value::number(
@@ -178,11 +180,70 @@ impl<'a> Runtime<'a> {
                         .player_mut(index)
                         .map_or(0.0, |player| player.absorption_health),
                 ),
+                Target::Entity(index) => value::number(
+                    self.world_mut()
+                        .entity_mut(index)
+                        .map_or(0.0, |entity| entity.absorption_health),
+                ),
+            },
+            GameValueId::Gamemode => match self.primary(stream)? {
+                Target::Player(index) => value::text(
+                    self.world_mut()
+                        .player_mut(index)
+                        .map_or_else(|| "SURVIVAL".to_owned(), |p| p.game_mode.clone()),
+                ),
                 Target::Entity(_) => {
-                    self.unimplemented("the game value 'absorption_health' of an entity")?;
+                    self.unimplemented("the game value 'gamemode' of an entity")?;
                     return Ok(None);
                 }
             },
+            GameValueId::FoodLevel => match self.primary(stream)? {
+                Target::Player(index) => {
+                    value::number(self.world_mut().player_mut(index).map_or(20.0, |p| p.food))
+                }
+                Target::Entity(_) => {
+                    self.unimplemented("the game value 'food_level' of an entity")?;
+                    return Ok(None);
+                }
+            },
+            GameValueId::FoodSaturation => match self.primary(stream)? {
+                Target::Player(index) => value::number(
+                    self.world_mut()
+                        .player_mut(index)
+                        .map_or(5.0, |p| p.saturation),
+                ),
+                Target::Entity(_) => {
+                    self.unimplemented("the game value 'food_saturation' of an entity")?;
+                    return Ok(None);
+                }
+            },
+            GameValueId::ExperienceLevel => match self.primary(stream)? {
+                Target::Player(index) => value::number(
+                    self.world_mut()
+                        .player_mut(index)
+                        .map_or(0.0, |p| p.experience),
+                ),
+                Target::Entity(_) => {
+                    self.unimplemented("the game value 'experience_level' of an entity")?;
+                    return Ok(None);
+                }
+            },
+            GameValueId::FireTicks => match self.primary(stream)? {
+                Target::Player(index) => value::number(
+                    self.world_mut()
+                        .player_mut(index)
+                        .map_or(0.0, |p| p.fire_ticks),
+                ),
+                Target::Entity(index) => value::number(
+                    self.world_mut()
+                        .entity_mut(index)
+                        .map_or(0.0, |e| e.fire_ticks),
+                ),
+            },
+            GameValueId::WorldWeather => value::text(self.world().weather().to_owned()),
+            GameValueId::WorldTime | GameValueId::WorldGameTime => {
+                value::number(self.world().world_time())
+            }
             other => {
                 self.unimplemented(format!("the game value '{}'", game_value_name(other)))?;
                 return Ok(None);

@@ -26,6 +26,7 @@ impl HirBuilder<'_> {
             Statement::While(w) => self.conv_while(w),
             Statement::For(f) => self.conv_for(f),
             Statement::Break(b) => Ok(self.conv_break(b)),
+            Statement::Continue(c) => Ok(self.conv_continue(c)),
             Statement::If(i) => self.conv_if(i),
             Statement::Match(m) => self.conv_match_stmt(m),
             Statement::TryCatch(tc) => self.conv_try_catch(tc),
@@ -187,13 +188,11 @@ impl HirBuilder<'_> {
                     };
                     let op_id = self.add(binop);
                     match &self.ast.exprs[target] {
-                        Expr::Property(p)
-                            if self.try_property_assign(p, a.value, op_id, &mut stmts)? =>
-                        {
+                        Expr::Property(p) if self.try_property_assign(p, op_id, &mut stmts)? => {
                             continue;
                         }
                         Expr::Subscript(s)
-                            if self.try_subscript_assign(s, a.value, &mut stmts)? =>
+                            if self.try_subscript_assign(s, op_id, &mut stmts)? =>
                         {
                             continue;
                         }
@@ -228,10 +227,10 @@ impl HirBuilder<'_> {
 
         for &target in &a.targets {
             match &self.ast.exprs[target] {
-                Expr::Property(p) if self.try_property_assign(p, a.value, val, &mut stmts)? => {
+                Expr::Property(p) if self.try_property_assign(p, val, &mut stmts)? => {
                     continue;
                 }
-                Expr::Subscript(s) if self.try_subscript_assign(s, a.value, &mut stmts)? => {
+                Expr::Subscript(s) if self.try_subscript_assign(s, val, &mut stmts)? => {
                     continue;
                 }
                 _ => {}
@@ -463,6 +462,10 @@ impl HirBuilder<'_> {
         self.add(Hir::Block(vec![set_flag, brk].into_boxed_slice()))
     }
 
+    fn conv_continue(&mut self, _c: &ContinueStmt) -> Id {
+        self.add(Hir::Continue)
+    }
+
     fn conv_while(&mut self, w: &WhileStmt) -> Result<Id, IrError> {
         let mut cond = self.conv_expr(w.condition)?;
         if w.is_not {
@@ -483,6 +486,9 @@ impl HirBuilder<'_> {
         let mut stmts = vec![while_node];
 
         for flag in &loop_ctx.outer_flags_checked {
+            if loop_ctx.break_flag == Some(*flag) || self.loop_stack.is_empty() {
+                continue;
+            }
             let flag_var_raw = self.add(Hir::Var(VarName(*flag)));
             let flag_var = self.wrap_scope(flag_var_raw, self.default_scope);
             let one = self.add(Hir::Num(1.0.into()));
@@ -492,6 +498,7 @@ impl HirBuilder<'_> {
             stmts.push(self.add(Hir::If([check_cond, brk, nop])));
 
             if let Some(parent_ctx) = self.loop_stack.last_mut()
+                && parent_ctx.break_flag != Some(*flag)
                 && !parent_ctx.outer_flags_checked.contains(flag)
             {
                 parent_ctx.outer_flags_checked.push(*flag);
@@ -871,6 +878,9 @@ impl HirBuilder<'_> {
         };
 
         for flag in &loop_ctx.outer_flags_checked {
+            if loop_ctx.break_flag == Some(*flag) || self.loop_stack.is_empty() {
+                continue;
+            }
             let flag_var_raw = self.add(Hir::Var(VarName(*flag)));
             let flag_var = self.wrap_scope(flag_var_raw, self.default_scope);
             let one = self.add(Hir::Num(1.0.into()));
@@ -880,6 +890,7 @@ impl HirBuilder<'_> {
             stmts.push(self.add(Hir::If([check_cond, brk, nop])));
 
             if let Some(parent_ctx) = self.loop_stack.last_mut()
+                && parent_ctx.break_flag != Some(*flag)
                 && !parent_ctx.outer_flags_checked.contains(flag)
             {
                 parent_ctx.outer_flags_checked.push(*flag);

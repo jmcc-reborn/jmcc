@@ -156,6 +156,25 @@ impl Parser<'_> {
     }
 
     #[instrument(skip(self), level = "trace")]
+    pub(super) fn parse_continue_stmt(&mut self) -> Result<Statement> {
+        let start_span = self.span();
+        self.bump();
+        let label = if let Some(Token::Label(lbl)) = self.curr_token() {
+            let label_id = self.interner.get_or_intern(lbl);
+            self.bump();
+            Some(label_id)
+        } else {
+            None
+        };
+        let end_span = self.last_span().end;
+        let _eaten: Result<()> = self.eat_terminator();
+        Ok(Statement::Continue(ContinueStmt {
+            label,
+            span: start_span.start..end_span,
+        }))
+    }
+
+    #[instrument(skip(self), level = "trace")]
     pub(super) fn parse_match_stmt(&mut self) -> Result<Statement> {
         self.bump();
         let start_span = self.span();

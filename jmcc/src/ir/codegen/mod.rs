@@ -8,7 +8,8 @@ use crate::Target;
 use crate::ir::mir::Mir;
 use egg::{Id, RecExpr};
 use jmcdata::generated::{
-    ActionArg, ActionDef, ActionId, ArgType, MeasureTimeDuration, get_action_def, get_action_id,
+    ActionArg, ActionDef, ActionId, ArgType, MeasureTimeDuration, get_action_def,
+    get_action_def_by_id, get_action_id,
 };
 use jmcdata::module::{
     Line, LineType, LineValue, Module, Number, Op, Parameter, Selection, TextParsing, TextValue,
@@ -258,13 +259,452 @@ impl CodeGen {
             }
             self.idx = 0;
             let mut ops = std::mem::take(&mut self.handlers[i].operations);
-            self.walk_operations(&mut ops, max_length);
+            let line_val = self.handlers[i].line_value.clone();
+            self.walk_operations(&mut ops, &line_val, max_length);
             self.handlers[i].operations = ops;
             i += 1;
         }
     }
 
-    fn walk_operations(&mut self, acts: &mut Vec<Op<'static>>, mut max_length: usize) {
+    fn extract_line_vars_from_value(val: Option<&Value<'_>>, out: &mut HashSet<String>) {
+        let Some(val) = val else { return };
+        match val {
+            Value::Variable {
+                variable,
+                scope: VariableScope::Line,
+            } => {
+                out.insert(variable.to_string());
+            }
+            Value::Array { values } => {
+                for item in values.iter().flatten() {
+                    Self::extract_line_vars_from_value(Some(item), out);
+                }
+            }
+            Value::Enum {
+                variable: Some(var),
+                scope: Some(VariableScope::Line),
+                ..
+            } => {
+                out.insert(var.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_written_line_vars_from_op(op: &Op<'_>, out: &mut HashSet<String>) {
+        if let Some(def) = get_action_def_by_id(op.action) {
+            if let Some(assigns) = def.assign {
+                for arg in assigns {
+                    Self::extract_line_vars_from_value(op.values.get(arg.id), out);
+                }
+            }
+            if def.object == "variable" && !def.id.starts_with("if_") {
+                Self::extract_line_vars_from_value(op.values.get("variable"), out);
+                Self::extract_line_vars_from_value(op.values.get("variables"), out);
+            }
+            if def.object == "repeat" {
+                Self::extract_line_vars_from_value(op.values.get("variable"), out);
+                Self::extract_line_vars_from_value(op.values.get("index_variable"), out);
+                Self::extract_line_vars_from_value(op.values.get("value_variable"), out);
+                Self::extract_line_vars_from_value(op.values.get("key_variable"), out);
+            }
+        }
+        if let Some(ops) = &op.operations {
+            for inner_op in ops {
+                Self::collect_written_line_vars_from_op(inner_op, out);
+            }
+        }
+    }
+
+    fn has_placeholder(name: &str) -> bool {
+        name.contains('%')
+    }
+
+    fn extract_call_placeholder_arg<'a>(text: &'a str, prefix: &str) -> Vec<&'a str> {
+        let mut results = Vec::new();
+        let mut start = 0;
+        while let Some(pos) = text[start..].find(prefix) {
+            let arg_start = start + pos + prefix.len();
+            let mut depth = 1;
+            let mut end = arg_start;
+            for b in text[arg_start..].bytes() {
+                if b == b'(' {
+                    depth += 1;
+                } else if b == b')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                end += 1;
+            }
+            if depth == 0 {
+                results.push(&text[arg_start..end]);
+                start = end + 1;
+            } else {
+                break;
+            }
+        }
+        results
+    }
+
+    fn collect_line_vars_from_value(val: &Value<'_>, out: &mut HashSet<String>) {
+        match val {
+            Value::Variable {
+                variable,
+                scope: VariableScope::Line,
+            } => {
+                out.insert(variable.to_string());
+            }
+            Value::Text { text, .. } => {
+                for arg in Self::extract_call_placeholder_arg(text, "%var_line(") {
+                    out.insert(arg.to_string());
+                }
+            }
+            Value::Array { values } => {
+                for item in values.iter().flatten() {
+                    Self::collect_line_vars_from_value(item, out);
+                }
+            }
+            Value::Map { values } => {
+                for (_k, v) in values.iter() {
+                    Self::collect_line_vars_from_value(v, out);
+                }
+            }
+            Value::Enum {
+                variable: Some(var),
+                scope: Some(VariableScope::Line),
+                ..
+            } => {
+                out.insert(var.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_referenced_line_vars_from_op(op: &Op<'_>, out: &mut HashSet<String>) {
+        for (_k, v) in op.values.iter() {
+            Self::collect_line_vars_from_value(v, out);
+        }
+        if let Some(ops) = &op.operations {
+            for inner_op in ops {
+                Self::collect_referenced_line_vars_from_op(inner_op, out);
+            }
+        }
+    }
+
+    fn collect_initial_line_vars(line_val: &LineValue<'_>) -> HashSet<String> {
+        let mut defined = HashSet::new();
+        if let LineValue::Fn { values, .. } = line_val
+            && let Some(Value::Array {
+                values: param_values,
+            }) = values.get("parameters")
+        {
+            for param in param_values.iter().flatten() {
+                if let Value::Parameter { name, .. } = param {
+                    defined.insert(name.to_string());
+                }
+            }
+        }
+        defined
+    }
+
+    fn check_needs_dynamic_args_at(
+        acts: &[Op<'static>],
+        current_line_val: &LineValue<'static>,
+        action_idx: usize,
+    ) -> bool {
+        if action_idx > acts.len() {
+            return false;
+        }
+        let mut defined_before = Self::collect_initial_line_vars(current_line_val);
+        for op in &acts[..action_idx] {
+            Self::collect_written_line_vars_from_op(op, &mut defined_before);
+        }
+        if !defined_before.iter().any(|v| Self::has_placeholder(v)) {
+            return false;
+        }
+        let mut referenced_in_remainder = HashSet::new();
+        for op in &acts[action_idx..] {
+            Self::collect_referenced_line_vars_from_op(op, &mut referenced_in_remainder);
+        }
+        referenced_in_remainder
+            .iter()
+            .any(|v| Self::has_placeholder(v))
+    }
+
+    fn emit_dynamic_args_warning() {
+        tracing::warn!(
+            "line variables with placeholders detected during function split, dynamic arguments will be used"
+        );
+        #[expect(clippy::print_stderr, reason = "compiler warning output to stderr")]
+        {
+            match crate::i18n::current_lang() {
+                crate::i18n::Lang::Ru => {
+                    eprintln!(
+                        "\x1b[1;33mпредупреждение\x1b[0m: при разделении функции обнаружены строчные переменные с плейсхолдерами, будут использованы динамические аргументы"
+                    );
+                }
+                crate::i18n::Lang::En => {
+                    eprintln!(
+                        "\x1b[1;33mwarning\x1b[0m: line variables with placeholders detected during function split, dynamic arguments will be used"
+                    );
+                }
+            }
+        }
+    }
+
+    fn inject_dynamic_args(acts: &mut Vec<Op<'static>>, remainder: &mut Vec<Op<'static>>) {
+        let va_names_var = Value::Variable {
+            variable: Cow::Borrowed("__va_names"),
+            scope: VariableScope::Line,
+        };
+        acts.push(Op::variable_get_list_variables(
+            va_names_var.clone(),
+            VariableScope::Line,
+        ));
+
+        let va_dict_var = Value::Variable {
+            variable: Cow::Borrowed("__va_args"),
+            scope: VariableScope::Line,
+        };
+        acts.push(Op::variable_set_value(
+            va_dict_var.clone(),
+            Value::Map {
+                values: LiteMap::new(),
+            },
+        ));
+
+        let va_idx_var = Value::Variable {
+            variable: Cow::Borrowed("__va_idx"),
+            scope: VariableScope::Line,
+        };
+        let va_name_var = Value::Variable {
+            variable: Cow::Borrowed("__va_name"),
+            scope: VariableScope::Line,
+        };
+        let dyn_val_var = Value::Variable {
+            variable: Cow::Borrowed("%var_line(__va_name)"),
+            scope: VariableScope::Line,
+        };
+
+        let set_entry_op = Op::variable_set_map_value(
+            va_dict_var.clone(),
+            va_dict_var,
+            va_name_var.clone(),
+            dyn_val_var,
+        );
+
+        let loop_op =
+            Op::repeat_for_each_in_list(va_idx_var, va_name_var, va_names_var, vec![set_entry_op]);
+        acts.push(loop_op);
+
+        let unpack_loop = Op::repeat_for_each_map_entry(
+            Value::Variable {
+                variable: Cow::Borrowed("__va_k"),
+                scope: VariableScope::Line,
+            },
+            Value::Variable {
+                variable: Cow::Borrowed("__va_v"),
+                scope: VariableScope::Line,
+            },
+            Value::Variable {
+                variable: Cow::Borrowed("va_args"),
+                scope: VariableScope::Line,
+            },
+            vec![Op::variable_set_value(
+                Value::Variable {
+                    variable: Cow::Borrowed("%var_line(__va_k)"),
+                    scope: VariableScope::Line,
+                },
+                Value::Variable {
+                    variable: Cow::Borrowed("__va_v"),
+                    scope: VariableScope::Line,
+                },
+            )],
+        );
+        remainder.insert(0, unpack_loop);
+    }
+
+    fn build_call_func_op(
+        func_count: usize,
+        vars_to_pass: &[String],
+        needs_dyn: bool,
+    ) -> Op<'static> {
+        let mut call_values = LiteMap::new();
+        call_values.insert(
+            Cow::Borrowed("function_name"),
+            Value::Text {
+                text: Cow::Owned(format!("jmcc.{func_count}")),
+                parsing: TextParsing::Legacy,
+            },
+        );
+
+        let mut args_map = LiteMap::new();
+        for var_name in vars_to_pass {
+            let key_val = Value::Text {
+                text: Cow::Borrowed(var_name.as_str()),
+                parsing: TextParsing::Plain,
+            };
+            let key_json = serde_json::to_string(&key_val).unwrap_or_else(|_| {
+                format!(r#"{{"type":"text","text":"{var_name}","parsing":"plain"}}"#)
+            });
+            let key = TextValue(key_json);
+            let val = Value::Variable {
+                variable: Cow::Owned(var_name.clone()),
+                scope: VariableScope::Line,
+            };
+            args_map.insert(key, val);
+        }
+
+        if needs_dyn {
+            let key_val = Value::Text {
+                text: Cow::Borrowed("va_args"),
+                parsing: TextParsing::Plain,
+            };
+            let key_json = serde_json::to_string(&key_val).unwrap_or_else(|_| {
+                r#"{"type":"text","text":"va_args","parsing":"plain"}"#.to_string()
+            });
+            let key = TextValue(key_json);
+            let val = Value::Variable {
+                variable: Cow::Borrowed("__va_args"),
+                scope: VariableScope::Line,
+            };
+            args_map.insert(key, val);
+        }
+
+        if !args_map.is_empty() {
+            call_values.insert(Cow::Borrowed("args"), Value::Map { values: args_map });
+        }
+
+        Op {
+            action: ActionId::CallFunction,
+            values: call_values,
+            operations: None,
+            conditional: None,
+            selection: None,
+            is_inverted: None,
+        }
+    }
+
+    fn build_continuation_line(
+        func_count: usize,
+        vars_to_pass: &[String],
+        needs_dyn: bool,
+        remainder: Vec<Op<'static>>,
+    ) -> Line<'static> {
+        let desc_text = match crate::i18n::current_lang() {
+            crate::i18n::Lang::Ru => "Функция создана автоматически",
+            crate::i18n::Lang::En => "The function was created automatically",
+        };
+        let mut func_values = LiteMap::new();
+        func_values.insert(
+            Cow::Borrowed("description"),
+            Value::Array {
+                values: vec![Some(Value::Text {
+                    text: Cow::Borrowed(desc_text),
+                    parsing: TextParsing::Legacy,
+                })],
+            },
+        );
+
+        let mut param_values: Vec<Option<Value<'static>>> = vars_to_pass
+            .iter()
+            .enumerate()
+            .map(|(slot, name)| {
+                Some(handlers::make_param(
+                    name.clone(),
+                    slot,
+                    false,
+                    -1,
+                    ArgType::Any,
+                ))
+            })
+            .collect();
+
+        if needs_dyn {
+            let slot = param_values.len();
+            param_values.push(Some(handlers::make_param(
+                "va_args".to_string(),
+                slot,
+                false,
+                -1,
+                ArgType::Map,
+            )));
+        }
+
+        if !param_values.is_empty() {
+            func_values.insert(
+                Cow::Borrowed("parameters"),
+                Value::Array {
+                    values: param_values,
+                },
+            );
+        }
+
+        Line {
+            line_type: LineType::Function,
+            position: 1337,
+            operations: remainder,
+            line_value: LineValue::Fn {
+                values: func_values,
+                name: Cow::Owned(format!("jmcc.{func_count}")),
+            },
+        }
+    }
+
+    fn split_at(
+        &mut self,
+        acts: &mut Vec<Op<'static>>,
+        current_line_val: &LineValue<'static>,
+        action_idx: usize,
+    ) {
+        let func_count = self.func_split_counter;
+        self.func_split_counter += 1;
+
+        let mut defined_before = Self::collect_initial_line_vars(current_line_val);
+        for op in &acts[..action_idx] {
+            Self::collect_written_line_vars_from_op(op, &mut defined_before);
+        }
+
+        let mut remainder = acts.split_off(action_idx);
+
+        let mut referenced_in_remainder = HashSet::new();
+        for op in &remainder {
+            Self::collect_referenced_line_vars_from_op(op, &mut referenced_in_remainder);
+        }
+
+        let needs_dyn = defined_before.iter().any(|v| Self::has_placeholder(v))
+            && referenced_in_remainder
+                .iter()
+                .any(|v| Self::has_placeholder(v));
+
+        if needs_dyn {
+            Self::emit_dynamic_args_warning();
+            Self::inject_dynamic_args(acts, &mut remainder);
+        }
+
+        let mut vars_to_pass: Vec<String> = defined_before
+            .intersection(&referenced_in_remainder)
+            .filter(|v| !Self::has_placeholder(v))
+            .cloned()
+            .collect();
+        vars_to_pass.sort();
+
+        let call_func = Self::build_call_func_op(func_count, &vars_to_pass, needs_dyn);
+        acts.push(call_func);
+
+        let func = Self::build_continuation_line(func_count, &vars_to_pass, needs_dyn, remainder);
+        self.handlers.push(func);
+        self.idx += 1;
+    }
+
+    fn walk_operations(
+        &mut self,
+        acts: &mut Vec<Op<'static>>,
+        current_line_val: &LineValue<'static>,
+        mut max_length: usize,
+    ) {
         if max_length > jmcdata::consts::MAX_ACTIONS_PER_LINE as usize {
             max_length = jmcdata::consts::MAX_ACTIONS_PER_LINE as usize;
         }
@@ -289,6 +729,15 @@ impl CodeGen {
             let mut reserved = 0;
             if has_next {
                 reserved += 1;
+                if Self::check_needs_dynamic_args_at(acts, current_line_val, action_idx + 1)
+                    || Self::check_needs_dynamic_args_at(acts, current_line_val, action_idx)
+                {
+                    // Dynamic packing actions:
+                    // 1 for get_list_variables + 1 for empty map set_value
+                    // + 2 for repeat_for_each_in_list container (open + close brackets)
+                    // + 1 for set_map_value inside loop body = 5 actions (plus 1 for call_func = 6 total)
+                    reserved += 5;
+                }
             }
 
             if has_next && is_container {
@@ -313,55 +762,7 @@ impl CodeGen {
                 .saturating_sub(has_contents);
 
             if new_idx > container_max_length {
-                let func_count = self.func_split_counter;
-                self.func_split_counter += 1;
-
-                let mut call_values = LiteMap::new();
-                call_values.insert(
-                    Cow::Borrowed("function_name"),
-                    Value::Text {
-                        text: Cow::Owned(format!("jmcc.{func_count}")),
-                        parsing: TextParsing::Legacy,
-                    },
-                );
-                let call_func = Op {
-                    action: ActionId::CallFunction,
-                    values: call_values,
-                    operations: None,
-                    conditional: None,
-                    selection: None,
-                    is_inverted: None,
-                };
-
-                let remainder = acts.split_off(action_idx);
-                acts.push(call_func);
-
-                let desc_text = match crate::i18n::current_lang() {
-                    crate::i18n::Lang::Ru => "Функция создана автоматически",
-                    crate::i18n::Lang::En => "The function was created automatically",
-                };
-                let mut func_values = LiteMap::new();
-                func_values.insert(
-                    Cow::Borrowed("description"),
-                    Value::Array {
-                        values: vec![Some(Value::Text {
-                            text: Cow::Borrowed(desc_text),
-                            parsing: TextParsing::Legacy,
-                        })],
-                    },
-                );
-
-                let func = Line {
-                    line_type: LineType::Function,
-                    position: 1337,
-                    operations: remainder,
-                    line_value: LineValue::Fn {
-                        values: func_values,
-                        name: Cow::Owned(format!("jmcc.{func_count}")),
-                    },
-                };
-                self.handlers.push(func);
-                self.idx += 1;
+                self.split_at(acts, current_line_val, action_idx);
                 break;
             }
 

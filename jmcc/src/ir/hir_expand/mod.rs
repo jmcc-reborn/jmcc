@@ -275,6 +275,15 @@ impl<'a> OverloadExpander<'a> {
 
             Hir::And([a, b]) => try_overload!(self, a, b, "__and__", Hir::And),
             Hir::Or([a, b]) => try_overload!(self, a, b, "__or__", Hir::Or),
+            Hir::In([a, b]) => {
+                let a_new = self.expand_node(a)?;
+                let b_new = self.expand_node(b)?;
+                let Some(f) = self.needs_overload(b_new, "__contains__") else {
+                    return Err(OverloadError::UnsupportedBinaryOp(BinOp::In));
+                };
+                trace!("expanding 'in' operator via __contains__");
+                self.expand_inline_from_hir(&f, vec![b_new, a_new])
+            }
 
             Hir::Not(a) => map_unary!(self, a, Hir::Not),
             Hir::Neg(a) => map_unary!(self, a, Hir::Neg),
@@ -287,6 +296,7 @@ impl<'a> OverloadExpander<'a> {
             Hir::Var(v) => Ok(self.add(Hir::Var(v))),
             Hir::Nop => Ok(self.add(Hir::Nop)),
             Hir::Break => Ok(self.add(Hir::Break)),
+            Hir::Continue => Ok(self.add(Hir::Continue)),
 
             Hir::Local(i) => map_unary!(self, i, Hir::Local),
             Hir::Game(i) => map_unary!(self, i, Hir::Game),

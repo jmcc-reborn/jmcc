@@ -19,6 +19,7 @@ impl Parser<'_> {
         let start_span = self.span();
         let mut lhs = self.parse_primary(min_bp)?;
         lhs = self.parse_postfix_ops(lhs, min_bp)?;
+        lhs = self.parse_infix_ops(lhs, min_bp, start_span.clone())?;
 
         if self.is_token(Token::Question) && min_bp <= 1 {
             self.bump();
@@ -72,7 +73,7 @@ impl Parser<'_> {
             lhs = self.arena.alloc(bin);
         }
 
-        self.parse_infix_ops(lhs, min_bp, start_span)
+        Ok(lhs)
     }
 
     #[instrument(skip(self, lhs, min_bp), level = "trace")]
@@ -461,8 +462,15 @@ impl Parser<'_> {
 
     #[instrument(skip(self, start_span), level = "trace")]
     fn parse_typed_literal(&mut self, start_span: Span) -> Result<Option<ExprId>> {
-        let Some(Token::Ident(s)) = self.curr_token() else {
-            return Ok(None);
+        let s = match self.curr_token() {
+            Some(Token::Ident(s)) => s,
+            Some(Token::Line) => "line",
+            Some(Token::Local) => "local",
+            Some(Token::Game) => "game",
+            Some(Token::Save) => "save",
+            Some(Token::Inline) => "inline",
+            Some(Token::Jmcc) => "jmcc",
+            _ => return Ok(None),
         };
 
         let next_span = self.peek_span();
@@ -639,8 +647,9 @@ impl Parser<'_> {
                 let name = self.interner.get_or_intern(s);
                 Expr::Ident(name, start_span)
             }
-            LexedToken::Normal(Token::Return, _, _) if self.edition < 2026 => {
-                let name = self.interner.get_or_intern("return");
+            LexedToken::Normal(Token::Return | Token::Continue, span, _) if self.edition < 2026 => {
+                let s = &self.input[span.clone()];
+                let name = self.interner.get_or_intern(s);
                 Expr::Ident(name, start_span)
             }
             _ => {

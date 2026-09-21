@@ -468,6 +468,15 @@ pub enum RuntimeError {
         limit: u64,
     },
 
+    /// A scenario assertion failed.
+    #[error("scenario assertion failed at step {step}: {message}")]
+    AssertionFailed {
+        /// Step index in scenario (1-based).
+        step: usize,
+        /// Detail of the failure.
+        message: String,
+    },
+
     /// An error carrying a location in the module. It wraps any other error as
     /// it leaves a handler, an action or a function, and serves diagnostics
     /// only: whether an error is catchable is decided by the nested one.

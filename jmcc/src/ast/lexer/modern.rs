@@ -22,6 +22,7 @@ pub fn keyword(s: &str) -> Option<Token<'static>> {
         "line" => Some(Token::Line),
         "jmcc" => Some(Token::Jmcc),
         "break" => Some(Token::Break),
+        "continue" => Some(Token::Continue),
         "ref" => Some(Token::Ref),
         "if" => Some(Token::If),
         "else" => Some(Token::Else),

@@ -297,6 +297,7 @@ impl Analyzer<'_> {
             Type::Class(def_id, _) => {
                 *def_id == boolean_id || *def_id == number_id || *def_id == any_def_id
             }
+            Type::Unknown => true,
             _ => false,
         }
     }
@@ -313,6 +314,7 @@ impl Analyzer<'_> {
                 true
             }
             Type::Class(def_id, _) => *def_id == number_id || *def_id == any_def_id,
+            Type::Unknown => true,
             _ => false,
         }
     }

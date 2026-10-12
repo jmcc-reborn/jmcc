@@ -99,6 +99,8 @@ pub struct ClassInfo {
     pub getters: HashMap<String, Rc<FunctionDecl>>,
     pub setters: HashMap<String, Rc<FunctionDecl>>,
     pub fields: HashMap<String, (Type, usize)>,
+    pub is_cached: bool,
+    pub cached_fields: std::collections::HashSet<String>,
     pub parent: Option<DefId>,
     pub parent_args: Vec<Type>,
     pub implements: Vec<(DefId, Vec<Type>)>,
@@ -109,6 +111,11 @@ pub struct ClassInfo {
 }
 
 impl ClassInfo {
+    #[must_use]
+    pub fn is_field_cached(&self, field_name: &str) -> bool {
+        self.is_cached || self.cached_fields.contains(field_name)
+    }
+
     #[must_use]
     pub fn is_single_field(&self, classes: &HashMap<DefId, Self>) -> bool {
         if self.is_dict || self.lang_item || self.is_interface {
@@ -218,6 +225,8 @@ impl IrCtx {
                         getters: HashMap::new(),
                         setters: HashMap::new(),
                         fields: HashMap::new(),
+                        is_cached: c.is_cached,
+                        cached_fields: std::collections::HashSet::new(),
                         parent: None,
                         parent_args: Vec::new(),
                         implements: Vec::new(),
@@ -257,6 +266,8 @@ impl IrCtx {
                         getters: HashMap::new(),
                         setters: HashMap::new(),
                         fields: HashMap::new(),
+                        is_cached: false,
+                        cached_fields: std::collections::HashSet::new(),
                         parent: None,
                         parent_args: Vec::new(),
                         implements: Vec::new(),
@@ -372,6 +383,7 @@ impl IrCtx {
         let mut getters = HashMap::new();
         let mut setters = HashMap::new();
         let mut fields = HashMap::new();
+        let mut cached_fields = std::collections::HashSet::new();
 
         for statement in &class.body {
             match statement {
@@ -426,6 +438,9 @@ impl IrCtx {
                 Statement::VarDecl(declaration) => {
                     for (index, field_name) in declaration.names.iter().enumerate() {
                         let name = text_value_to_string(ast, field_name);
+                        if declaration.is_cached {
+                            cached_fields.insert(name.clone());
+                        }
                         let ty = declaration.tys.get(index).copied().flatten().map_or(
                             Type::Unknown,
                             |ty| {
@@ -453,6 +468,8 @@ impl IrCtx {
             info.getters = getters;
             info.setters = setters;
             info.fields = fields;
+            info.is_cached = class.is_cached;
+            info.cached_fields = cached_fields;
         }
     }
 

@@ -92,6 +92,17 @@ const fn positional(value: ExprId) -> ArgExpr {
     }
 }
 
+/// The implicit receiver of a method call. It is a reference: `obj.method()`
+/// mutates `obj`, so the receiver must not be copied into the call.
+const fn receiver(value: ExprId) -> ArgExpr {
+    ArgExpr {
+        name: None,
+        value,
+        spread: 0,
+        is_ref: true,
+    }
+}
+
 #[derive(Clone)]
 enum ClassMember {
     Method(Rc<FunctionDecl>),
@@ -104,6 +115,7 @@ enum ClassMember {
 enum FieldAccess {
     Direct,
     Slot(usize),
+    CachedSlot(usize),
     Dict,
 }
 
@@ -127,11 +139,17 @@ pub struct HirBuilder<'a> {
     scopes: Vec<HashMap<Symbol, Binding>>,
     inline_vars_stack: Vec<HashMap<Symbol, Id>>,
     inline_return_var: Option<Id>,
+    inline_aliases: HashMap<Symbol, Symbol>,
+    active_field_read_counts: HashMap<(Symbol, Symbol), usize>,
+    pub(super) current_init_self: Option<Symbol>,
+    pub(super) init_written_slots: HashSet<usize>,
+    pub(super) cached_field_vars: HashMap<(Symbol, Symbol), Id>,
     temp_n: usize,
     nodes: NodeArena<Hir>,
     is_statement: bool,
     default_scope: VarScope,
     loop_stack: Vec<LoopCtx>,
+    pub(super) branch_depth: usize,
 }
 
 /// Common emitter interface: delegates to inherent `add` / `get` / `fresh`.
@@ -167,6 +185,11 @@ impl<'a> HirBuilder<'a> {
             scopes: vec![HashMap::new()],
             inline_vars_stack: vec![HashMap::new()],
             inline_return_var: None,
+            inline_aliases: HashMap::new(),
+            active_field_read_counts: HashMap::new(),
+            current_init_self: None,
+            init_written_slots: HashSet::new(),
+            cached_field_vars: HashMap::new(),
             temp_n: 0,
             nodes: NodeArena::with_capacity(ast.statements.len()),
             is_statement: false,
@@ -176,6 +199,7 @@ impl<'a> HirBuilder<'a> {
                 VarScope::Line
             },
             loop_stack: Vec::new(),
+            branch_depth: 0,
         }
     }
 

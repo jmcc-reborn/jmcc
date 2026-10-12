@@ -151,6 +151,9 @@ impl Lockfile {
         let manifest_deps = root_manifest.all_dependencies(include_dev);
 
         for (dep_name, dep) in &manifest_deps {
+            if dep.is_optional() && self.get_package(dep_name).is_none() {
+                continue;
+            }
             let locked = self.get_package(dep_name).ok_or_else(|| {
                 ProjectError::LockfileOutOfDate {
                     path: root_dir.join("jmcc.lock"),

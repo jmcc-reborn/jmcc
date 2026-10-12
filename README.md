@@ -141,10 +141,14 @@ network = { git = "https://github.com/example/network.git", branch = "main" }
 
 [profile.dev]
 opt_level = 1
+debug_time = true
+minify = false
 
 [profile.release]
 opt_level = 3
 emit = ["json"]
+debug_time = false
+minify = true
 
 # Optional module upload configuration:
 [upload]

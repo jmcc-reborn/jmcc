@@ -35,6 +35,13 @@ pub struct ProfileConfig {
     /// Custom webhook URL for unofficial module uploading.
     #[serde(alias = "webhook_url", alias = "webhook", alias = "upload_webhook")]
     pub webhook_url: Option<String>,
+    /// Measure and display handler execution time in chat (`controller::measure_time`).
+    #[serde(alias = "debug_time")]
+    pub debug_time: Option<bool>,
+    /// Minify emitted JSON module (compact representation without whitespace/newlines).
+    pub minify: Option<bool>,
+    /// Features to enable in this profile.
+    pub features: Option<Vec<String>>,
 }
 
 impl ProfileConfig {
@@ -56,6 +63,9 @@ impl ProfileConfig {
             disable_action_limit: None,
             upload_target: None,
             webhook_url: None,
+            debug_time: Some(true),
+            minify: Some(false),
+            features: None,
         }
     }
 
@@ -72,6 +82,9 @@ impl ProfileConfig {
             disable_action_limit: None,
             upload_target: None,
             webhook_url: None,
+            debug_time: Some(false),
+            minify: Some(true),
+            features: None,
         }
     }
 
@@ -103,6 +116,15 @@ impl ProfileConfig {
         }
         if other.webhook_url.is_some() {
             self.webhook_url = other.webhook_url.clone();
+        }
+        if other.debug_time.is_some() {
+            self.debug_time = other.debug_time;
+        }
+        if other.minify.is_some() {
+            self.minify = other.minify;
+        }
+        if other.features.is_some() {
+            self.features = other.features.clone();
         }
     }
 
@@ -139,6 +161,15 @@ impl ProfileConfig {
         }
         if let Some(url) = &self.webhook_url {
             options.webhook_url = Some(url.clone());
+        }
+        if let Some(dt) = self.debug_time {
+            options.debug_time = dt;
+        }
+        if let Some(m) = self.minify {
+            options.minify = m;
+        }
+        if let Some(feats) = &self.features {
+            options.features.extend(feats.iter().cloned());
         }
     }
 }

@@ -122,6 +122,7 @@ pub fn lift_lambdas(ast: &mut Ast) {
             implements: vec![iface_name],
             body: vec![Statement::Function(call_method)],
             is_inline: true,
+            is_cached: false,
             lang_item: false,
             is_dict: false,
             is_exported: false,

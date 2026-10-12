@@ -385,6 +385,9 @@ impl<'a> PrettyPrinter<'a> {
                 if cd.is_inline {
                     s.push_str(" [inline]");
                 }
+                if cd.is_cached {
+                    s.push_str(" [cached]");
+                }
                 if let Some(parent) = cd.parent {
                     s.push_str(&format!(" : {}", self.r(parent)));
                 }
@@ -515,15 +518,16 @@ impl<'a> PrettyPrinter<'a> {
                 }
                 Ok(())
             }
+            Statement::Cfg(cfg, inner) => {
+                Self::fmt_node(f, &format!("Cfg({:?})", cfg.expr), &cfg.span)?;
+                writeln!(f)?;
+                self.fmt_stmt(inner, indent + 2, f)
+            }
         }
     }
 
     fn fmt_if_stmt(&self, if_stmt: &IfStmt, indent: usize, f: &mut Formatter<'_>) -> fmt::Result {
-        Self::fmt_node(
-            f,
-            &format!("If{}", if if_stmt.is_not { "!" } else { "" }),
-            &if_stmt.span,
-        )?;
+        Self::fmt_node(f, "If", &if_stmt.span)?;
         self.fmt_stmts_block(f, indent, "then", &if_stmt.then_body)?;
         for (condition, body) in &if_stmt.elif_branches {
             w_ind!(f, indent + 1)?;
@@ -550,11 +554,7 @@ impl<'a> PrettyPrinter<'a> {
             .label
             .map(|l| format!(" '{}:", self.r(l)))
             .unwrap_or_default();
-        Self::fmt_node(
-            f,
-            &format!("While{}{}", label_str, if w.is_not { "!" } else { "" }),
-            &w.span,
-        )?;
+        Self::fmt_node(f, &format!("While{label_str}"), &w.span)?;
         w_ind!(f, indent + 1)?;
         writeln!(f, "cond:")?;
         self.fmt_expr(w.condition, indent + 2, f)?;
@@ -589,6 +589,9 @@ impl<'a> PrettyPrinter<'a> {
         let mut description = String::from("VarDecl");
         if declaration.is_exported {
             description.push_str(" [exported]");
+        }
+        if declaration.is_cached {
+            description.push_str(" [cached]");
         }
         description.push(' ');
         for (index, name) in declaration.names.iter().enumerate() {

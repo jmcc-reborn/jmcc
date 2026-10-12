@@ -36,6 +36,14 @@ pub struct DetailedDependency {
     pub package: Option<String>,
     /// Inherit definition from `[workspace.dependencies]`.
     pub workspace: Option<bool>,
+    /// Whether this dependency is optional (activated only via features).
+    pub optional: Option<bool>,
+    /// List of features to enable on the dependency.
+    #[serde(default)]
+    pub features: Option<Vec<String>>,
+    /// Whether to enable default features of the dependency (defaults to true).
+    #[serde(alias = "default_features")]
+    pub default_features: Option<bool>,
 }
 
 impl Dependency {
@@ -97,6 +105,33 @@ impl Dependency {
         }
     }
 
+    /// Returns whether this dependency is optional.
+    #[must_use]
+    pub fn is_optional(&self) -> bool {
+        match self {
+            Self::Simple(_) => false,
+            Self::Detailed(d) => d.optional.unwrap_or(false),
+        }
+    }
+
+    /// Returns the features requested for this dependency.
+    #[must_use]
+    pub fn features(&self) -> &[String] {
+        match self {
+            Self::Simple(_) => &[],
+            Self::Detailed(d) => d.features.as_deref().unwrap_or(&[]),
+        }
+    }
+
+    /// Returns whether default features are enabled for this dependency (default true).
+    #[must_use]
+    pub fn default_features(&self) -> bool {
+        match self {
+            Self::Simple(_) => true,
+            Self::Detailed(d) => d.default_features.unwrap_or(true),
+        }
+    }
+
     /// Validates that the dependency has a valid source given that there is no central registry.
     ///
     /// # Errors
@@ -144,6 +179,26 @@ impl fmt::Display for Dependency {
                 }
                 if let Some(v) = &d.version {
                     parts.push(format!("version = \"{v}\""));
+                }
+                if let Some(opt) = d.optional
+                    && opt
+                {
+                    parts.push("optional = true".to_owned());
+                }
+                if let Some(feats) = &d.features
+                    && !feats.is_empty()
+                {
+                    let list = feats
+                        .iter()
+                        .map(|f| format!("\"{f}\""))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    parts.push(format!("features = [{list}]"));
+                }
+                if let Some(df) = d.default_features
+                    && !df
+                {
+                    parts.push("default-features = false".to_owned());
                 }
                 write!(f, "{{ {} }}", parts.join(", "))
             }

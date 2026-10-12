@@ -301,3 +301,99 @@ fn exception_catcher_survives_a_nested_function_wait() {
     assert_messages(&runtime, &["peer-before-error", "caught-and-continued"]);
     assert_eq!(runtime.world().tick(), 2);
 }
+
+#[test]
+fn unmitigated_nested_ref_returns_zero_in_jmcmock() {
+    // Tests JustMC platform behavior modeled in jmcmock:
+    // If a reference parameter is forwarded to another reference parameter directly
+    // without compiler soft-fix (copy-in/copy-out), JustMC performs only a single dereference,
+    // causing the chained reference to evaluate to Number 0 instead of the underlying value.
+    let ref_param = |name: &str, slot: usize| {
+        json!({
+            "type": "parameter",
+            "name": name,
+            "type_key": "singular",
+            "value_type": "variable",
+            "is_required": "true",
+            "default_value": "{}",
+            "slot": slot,
+            "description_slot": -1,
+            "description": "{\"translations\":{}}"
+        })
+    };
+
+    let source = module(vec![
+        // world_start: sets game var 'target_list' = [1, 2, 3], then calls step1(ref target_list)
+        event(vec![
+            op(
+                "set_variable_create_list",
+                &[
+                    ("variable", variable("game", "target_list")),
+                    (
+                        "values",
+                        json!({"type": "array", "values": [number(1), number(2), number(3)]}),
+                    ),
+                ],
+            ),
+            op(
+                "call_function",
+                &[
+                    ("function_name", text("step1")),
+                    (
+                        "args",
+                        json!({
+                            "type": "map",
+                            "values": {
+                                "{\"type\":\"text\",\"text\":\"p1\",\"parsing\":\"plain\"}": variable("game", "target_list")
+                            }
+                        }),
+                    ),
+                ],
+            ),
+        ]),
+        // step1: receives ref p1 (linked to game var target_list).
+        // Without soft-fix, directly forwards p1 to step2(ref p2).
+        json!({
+            "type": "function",
+            "name": "step1",
+            "position": 1,
+            "values": [{
+                "name": "parameters",
+                "value": {"type": "array", "values": [ref_param("p1", 0)]}
+            }],
+            "operations": [
+                op("call_function", &[
+                    ("function_name", text("step2")),
+                    ("args", json!({
+                        "type": "map",
+                        "values": {
+                            "{\"type\":\"text\",\"text\":\"p2\",\"parsing\":\"plain\"}": variable("line", "p1")
+                        }
+                    })),
+                ]),
+            ]
+        }),
+        // step2: receives ref p2 (which points to p1 in step1, which points to target_list).
+        // JustMC reads p2 -> sees intermediate link in step1 -> returns Number 0.
+        // Reading it into game var 'observed' records Number 0.
+        json!({
+            "type": "function",
+            "name": "step2",
+            "position": 2,
+            "values": [{
+                "name": "parameters",
+                "value": {"type": "array", "values": [ref_param("p2", 0)]}
+            }],
+            "operations": [
+                set("game", "observed", variable("line", "p2")),
+            ]
+        }),
+    ]);
+
+    let program = Program::parse(&source).expect("valid module");
+    let mut runtime = Runtime::new(&program).expect("runtime");
+    runtime.fire_event("world_start").expect("event completes");
+
+    // Observed value in step2 must be 0 (emulating JustMC platform limitation)
+    assert_global(&runtime, "observed", 0);
+}

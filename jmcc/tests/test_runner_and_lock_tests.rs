@@ -192,6 +192,7 @@ fn test_test_runner_discovery_and_execution() {
         locale: Some("en".to_string()),
         locked: false,
         offline: false,
+        ..Default::default()
     };
 
     let summary = run_tests(app_dir.to_str(), &opts).expect("run project tests");
@@ -227,6 +228,7 @@ fn test_test_runner_filtering_and_ignored() {
         locale: Some("ru".to_string()),
         locked: false,
         offline: false,
+        ..Default::default()
     };
     let summary = run_tests(app_dir.to_str(), &filter_opts).expect("run filtered tests");
     assert_eq!(summary.passed, 1);
@@ -242,6 +244,7 @@ fn test_test_runner_filtering_and_ignored() {
         locale: Some("en".to_string()),
         locked: false,
         offline: false,
+        ..Default::default()
     };
     let ignored_summary = run_tests(app_dir.to_str(), &ignored_opts).expect("run ignored tests");
     // Only test_pending_feature was ignored, running it should pass

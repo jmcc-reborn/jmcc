@@ -89,6 +89,7 @@ The lexer maps equivalent English (Modern) and Russian (Alternate) keywords into
 | `Token::Enum` | `enum` | `перечисление` | Strongly-typed enumeration declaration |
 | `Token::TypeAlias` | `typealias`, `type` | `тип`, `псевдоним` | Type alias declaration |
 | `Token::Inline` | `inline` | `встраиваемый` | Inlining modifier |
+| `Token::Cached` | `cached` | `кэшированный`, `кешированный`, `кэш`, `кеш` | Class and field caching modifier (write-through) |
 | `Token::Line` | `line` | `строка` | Line scope modifier |
 | `Token::Local` | `local` | `локальный` | Local thread call-stack scope modifier |
 | `Token::Game` | `game` | `игра` | Global game scope modifier |
@@ -259,7 +260,7 @@ ProcessDecl ::= Decorator* ("export" | "экспорт")? ("process" | "проц
 
 EventDecl ::= ("event" | "событие") "<" Identifier ">" Block ;
 
-ClassDecl ::= Decorator* ("export" | "экспорт")? ("inline" | "встраиваемый")? 
+ClassDecl ::= Decorator* ("export" | "экспорт")? ("inline" | "встраиваемый" | "cached" | "кэшированный" | "кешированный" | "кэш" | "кеш")* 
               ("class" | "класс") Identifier GenericParams? 
               (("extends" | "расширяет") Identifier)? 
               (("implements" | "реализует") TypeList)? "{" ClassMember* "}" ;
@@ -339,6 +340,23 @@ ArgumentList ::= Argument ("," Argument)* ","? ;
 Argument ::= (Identifier "=")? Expr ;
 ```
 
+### 3.4. Conditional Compilation (`@cfg`)
+
+The `@cfg(...)` (Russian: `@cfg(фича = "...")` or `@кфг(...)`) attribute enables compile-time conditional compilation. It can be attached to any item: imports, functions, classes, interfaces, enums, type aliases, variable declarations, and statements inside blocks.
+
+```ebnf
+CfgAttr ::= ("@cfg" | "@кфг") "(" CfgExpr ")" ;
+CfgExpr ::= ("feature" | "фича") ("=" | ":") (StringLiteral | Identifier)
+          | ("not" | "не") "(" CfgExpr ")"
+          | ("all" | "все") "(" CfgExpr ("," CfgExpr)* ","? ")"
+          | ("any" | "любой" | "любая") "(" CfgExpr ("," CfgExpr)* ","? ")" ;
+```
+
+#### Semantics of `@cfg`:
+1. **Early AST Pruning**: Statements and declarations whose `@cfg` predicate evaluates to `false` under the active feature set are stripped immediately at the highest AST level before import resolution, semantic analysis, type inference, HIR, MIR, and code generation.
+2. **Short-Circuit Imports**: Inactive `@cfg` imports are pruned before filesystem lookup, preventing missing-file errors for inactive optional modules.
+3. **Check-Cfg Validation**: When the project manifest defines a `[features]` table, feature names referenced in `@cfg` attributes are validated at compile time against declared features.
+
 ---
 
 ## 4. Type System and Static Semantics
@@ -402,6 +420,17 @@ Variables declared with the `inline` modifier or `const` keyword do not allocate
 ### 5.2. Parameter Passing Semantics (`ref`)
 1. By default, parameter passing is performed by value (shallow copy).
 2. Parameters with the `ref` (or `ссылка`) modifier bind directly to the caller's variable reference. Mutations of the variable within the function immediately reflect in the caller's context.
+
+### 5.3. Cached Classes and Fields (`cached class` / `cached var`)
+Classes and fields can be declared with the `cached` (Russian: `кэшированный`, `кешированный`, `кэш`, `кеш`) modifier:
+1. `cached class Name`: All instance fields are treated as cached.
+2. `class Name { cached field: Type; }`: Only specifically annotated fields are cached.
+
+#### Write-Through Semantics:
+- **First Read**: On the first read of `obj.prop` inside a function, event, or process, the compiler emits a `get_list_value` action and assigns the result to a scoped local variable `__cache_{obj}_{prop}`.
+- **Subsequent Reads**: Subsequent accesses to `obj.prop` within the same execution frame reuse `__cache_{obj}_{prop}` directly, completely eliminating redundant `get_list_value` server actions and dramatically reducing action count and JSON payload size.
+- **Write-Through Mutation**: When `obj.prop = value` is assigned, the compiler emits **both** a `set_list_value` action on the underlying list and updates `__cache_{obj}_{prop}`. This guarantees that concurrent asynchronous event handlers always observe the latest state, preventing data races while retaining optimal local read performance.
+- **Cache Invalidation**: Reassignment of the object variable or passing it as a `ref` parameter or mutable receiver invalidates the cached slot variable, forcing subsequent reads to reload from the backing list.
 
 ---
 
@@ -544,7 +573,7 @@ Categories are strictly validated against the `jmcdata` schema:
 - Event handlers are declared via `event<event_name> { ... }`.
 - Each event in the `jmcdata` schema specifies `cancellable: true/false`. Cancellable events can be aborted by invoking the platform action `event::cancel()`.
 - Top-level code outside of event handlers is grouped into a synthetic `world_start` handler.
-- Every handler body is unconditionally wrapped by the compiler in `controller_measure_time` instrumentation.
+- Every handler body is wrapped by the compiler in `controller_measure_time` instrumentation when `debug_time` is enabled in the active build profile (`true` by default in `dev`, `false` by default in `release`).
 
 ---
 
@@ -855,10 +884,13 @@ jmcc compile [input] [-o output.json] [-O 0..3] [--release] [--edition 2026] [--
 - `--locked`: Forbids updating `jmcc.lock`.
 - `--offline`: Disables network requests.
 - `--test`: Compiles while preserving test functions.
+- `-F, --features <LIST>`: Comma-separated list of package features to activate.
+- `--all-features`: Activates all declared package features.
+- `--no-default-features`: Disables automatic activation of features specified in `[features].default`.
 
 ### 14.2. Subcommand `test`
 ```bash
-jmcc test [filter] [--exact] [--ignored] [--nocapture] [--locale ru|en] [--locked] [--offline]
+jmcc test [filter] [--exact] [--ignored] [--nocapture] [--locale ru|en] [--locked] [--offline] [-F, --features <LIST>] [--all-features] [--no-default-features]
 ```
 
 ### 14.3. Subcommand `update`

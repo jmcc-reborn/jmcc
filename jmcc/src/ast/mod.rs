@@ -14,8 +14,9 @@ pub mod parser;
 pub mod semantic;
 
 pub use import::{
-    ImportResolver, parse_file, parse_file_with_full_options, parse_file_with_options,
-    parse_file_with_overlays, parse_file_with_packages,
+    ImportResolver, parse_file, parse_file_with_features, parse_file_with_features_ext,
+    parse_file_with_full_options, parse_file_with_options, parse_file_with_overlays,
+    parse_file_with_packages,
 };
 pub use lambda_lift::lift_lambdas;
 pub use semantic::{analyze, analyze_for_diagnostics};
@@ -382,6 +383,7 @@ pub struct ClassDecl {
     pub implements: Vec<StrId>,
     pub body: Vec<Statement>,
     pub is_inline: bool,
+    pub is_cached: bool,
     pub lang_item: bool,
     pub is_dict: bool,
     pub is_exported: bool,
@@ -426,7 +428,6 @@ pub struct IfStmt {
     pub elif_branches: Vec<(ExprId, Vec<Statement>)>,
     pub elif_spans: Vec<Span>,
     pub else_body: Option<Vec<Statement>>,
-    pub is_not: bool,
     pub span: Span,
 }
 
@@ -437,6 +438,7 @@ pub struct VarDecl {
     pub tys: Vec<Option<StrId>>,
     pub value: Option<ExprId>,
     pub is_exported: bool,
+    pub is_cached: bool,
     pub span: Span,
 }
 
@@ -497,7 +499,6 @@ pub struct WhileStmt {
     pub label: Option<StrId>,
     pub condition: ExprId,
     pub body: Vec<Statement>,
-    pub is_not: bool,
     pub span: Span,
 }
 
@@ -545,6 +546,60 @@ pub enum Statement {
     TryCatch(TryCatchStmt),
     Throw(ThrowStmt),
     Interface(InterfaceDecl),
+    Cfg(CfgAttr, Box<Statement>),
+}
+
+/// Conditional compilation expression in `@cfg(...)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CfgExpr {
+    /// Matches `feature = "name"` or `фича = "name"`.
+    Feature(String),
+    /// All sub-expressions must be satisfied.
+    All(Vec<CfgExpr>),
+    /// At least one sub-expression must be satisfied.
+    Any(Vec<CfgExpr>),
+    /// Sub-expression must not be satisfied.
+    Not(Box<CfgExpr>),
+    /// Always true.
+    True,
+    /// Always false.
+    False,
+}
+
+impl CfgExpr {
+    /// Evaluates whether this conditional compilation expression is active.
+    #[must_use]
+    pub fn is_enabled(&self, enabled_features: &std::collections::HashSet<String>) -> bool {
+        match self {
+            Self::Feature(name) => enabled_features.contains(name),
+            Self::All(exprs) => exprs.iter().all(|e| e.is_enabled(enabled_features)),
+            Self::Any(exprs) => exprs.iter().any(|e| e.is_enabled(enabled_features)),
+            Self::Not(inner) => !inner.is_enabled(enabled_features),
+            Self::True => true,
+            Self::False => false,
+        }
+    }
+
+    /// Recursively collects all feature names referenced by this expression.
+    pub fn referenced_features(&self, out: &mut Vec<String>) {
+        match self {
+            Self::Feature(f) => out.push(f.clone()),
+            Self::All(exprs) | Self::Any(exprs) => {
+                for e in exprs {
+                    e.referenced_features(out);
+                }
+            }
+            Self::Not(inner) => inner.referenced_features(out),
+            Self::True | Self::False => {}
+        }
+    }
+}
+
+/// `@cfg(...)` attribute with its source span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfgAttr {
+    pub expr: CfgExpr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -556,6 +611,122 @@ pub struct Ast {
     /// Precomputed line start index for each file in [`Ast::sources`], enabling O(log n) span lookup.
     pub line_indexes: HashMap<PathBuf, LineIndex>,
     pub file_offsets: Vec<(PathBuf, usize, usize)>,
+}
+
+impl Ast {
+    /// Filters the AST statements recursively based on active features.
+    /// Statements behind unfulfilled `@cfg` attributes are stripped.
+    /// Fulfilled `@cfg` wrappers are unwrapped into their inner statements.
+    pub fn filter_cfg(
+        &mut self,
+        enabled_features: &std::collections::HashSet<String>,
+        known_features: Option<&std::collections::HashSet<String>>,
+    ) {
+        Self::filter_statements_slice(&mut self.statements, enabled_features, known_features);
+    }
+
+    fn filter_statements_slice(
+        stmts: &mut Vec<Statement>,
+        enabled_features: &std::collections::HashSet<String>,
+        known_features: Option<&std::collections::HashSet<String>>,
+    ) {
+        let old = std::mem::take(stmts);
+        for stmt in old {
+            if let Some(mut unwrapped) =
+                Self::filter_statement(stmt, enabled_features, known_features)
+            {
+                Self::filter_nested_bodies(&mut unwrapped, enabled_features, known_features);
+                stmts.push(unwrapped);
+            }
+        }
+    }
+
+    fn filter_statement(
+        mut stmt: Statement,
+        enabled_features: &std::collections::HashSet<String>,
+        known_features: Option<&std::collections::HashSet<String>>,
+    ) -> Option<Statement> {
+        while let Statement::Cfg(attr, inner) = stmt {
+            if let Some(known) = known_features {
+                let mut refs = Vec::new();
+                attr.expr.referenced_features(&mut refs);
+                for r in refs {
+                    if !known.contains(&r) {
+                        tracing::warn!(
+                            feature = %r,
+                            "Unknown feature in @cfg; known features are: {:?}",
+                            known
+                        );
+                    }
+                }
+            }
+
+            if !attr.expr.is_enabled(enabled_features) {
+                return None;
+            }
+            stmt = *inner;
+        }
+        Some(stmt)
+    }
+
+    fn filter_nested_bodies(
+        stmt: &mut Statement,
+        enabled_features: &std::collections::HashSet<String>,
+        known_features: Option<&std::collections::HashSet<String>>,
+    ) {
+        match stmt {
+            Statement::Function(f) => {
+                Self::filter_statements_slice(&mut f.body, enabled_features, known_features);
+            }
+            Statement::Process(p) => {
+                Self::filter_statements_slice(&mut p.body, enabled_features, known_features);
+            }
+            Statement::Event(e) => {
+                Self::filter_statements_slice(&mut e.body, enabled_features, known_features);
+            }
+            Statement::Class(c) => {
+                Self::filter_statements_slice(&mut c.body, enabled_features, known_features);
+            }
+            Statement::Interface(i) => {
+                Self::filter_statements_slice(&mut i.body, enabled_features, known_features);
+            }
+            Statement::If(i) => {
+                Self::filter_statements_slice(&mut i.then_body, enabled_features, known_features);
+                for (_cond, branch) in &mut i.elif_branches {
+                    Self::filter_statements_slice(branch, enabled_features, known_features);
+                }
+                if let Some(else_body) = &mut i.else_body {
+                    Self::filter_statements_slice(else_body, enabled_features, known_features);
+                }
+            }
+            Statement::While(w) => {
+                Self::filter_statements_slice(&mut w.body, enabled_features, known_features);
+            }
+            Statement::For(f) => {
+                Self::filter_statements_slice(&mut f.body, enabled_features, known_features);
+            }
+            Statement::TryCatch(tc) => {
+                Self::filter_statements_slice(&mut tc.try_body, enabled_features, known_features);
+                Self::filter_statements_slice(&mut tc.catch_body, enabled_features, known_features);
+            }
+            Statement::Match(m) => {
+                for arm in &mut m.arms {
+                    Self::filter_statements_slice(&mut arm.body, enabled_features, known_features);
+                }
+            }
+            Statement::Cfg(_, _)
+            | Statement::Import(_)
+            | Statement::Enum(_)
+            | Statement::TypeAlias(_)
+            | Statement::Break(_)
+            | Statement::Continue(_)
+            | Statement::VarDecl(_)
+            | Statement::Assign(_)
+            | Statement::Return(_)
+            | Statement::Expr(_)
+            | Statement::Throw(_) => {}
+        }
+    }
 }
 
 /// Structural equality of expressions, ignoring source positions.
@@ -663,4 +834,65 @@ fn same_args(ast: &Ast, a: &[ArgExpr], b: &[ArgExpr]) -> bool {
         && a.iter().zip(b).all(|(x, y)| {
             x.name == y.name && x.spread == y.spread && structurally_eq(ast, x.value, y.value)
         })
+}
+
+#[must_use]
+pub fn stmt_ends_with_return(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Return(_) => true,
+        Statement::If(i) => i.else_body.as_ref().is_some_and(|else_b| {
+            block_ends_with_return(&i.then_body)
+                && i.elif_branches
+                    .iter()
+                    .all(|(_, b)| block_ends_with_return(b))
+                && block_ends_with_return(else_b)
+        }),
+        Statement::Cfg(_, inner) => stmt_ends_with_return(inner),
+        _ => false,
+    }
+}
+
+#[must_use]
+pub fn block_ends_with_return(stmts: &[Statement]) -> bool {
+    stmts.last().is_some_and(stmt_ends_with_return)
+}
+
+#[must_use]
+pub fn structure_early_returns(stmts: &[Statement]) -> Vec<Statement> {
+    let mut result = Vec::new();
+    let mut i = 0;
+    while i < stmts.len() {
+        let stmt = &stmts[i];
+        if matches!(stmt, Statement::Return(_)) || stmt_ends_with_return(stmt) {
+            result.push(stmt.clone());
+            break;
+        }
+        if let Statement::If(if_stmt) = stmt {
+            let structured_then = structure_early_returns(&if_stmt.then_body);
+            if block_ends_with_return(&structured_then)
+                && if_stmt.else_body.is_none()
+                && if_stmt.elif_branches.is_empty()
+                && i + 1 < stmts.len()
+            {
+                let rest = structure_early_returns(&stmts[i + 1..]);
+                let mut new_if = if_stmt.clone();
+                new_if.then_body = structured_then;
+                new_if.else_body = Some(rest);
+                result.push(Statement::If(new_if));
+                break;
+            } else {
+                let mut new_if = if_stmt.clone();
+                new_if.then_body = structured_then;
+                if let Some(eb) = &if_stmt.else_body {
+                    new_if.else_body = Some(structure_early_returns(eb));
+                }
+                result.push(Statement::If(new_if));
+                i += 1;
+                continue;
+            }
+        }
+        result.push(stmt.clone());
+        i += 1;
+    }
+    result
 }

@@ -323,3 +323,89 @@ fn test_profile_upload_configuration() {
         Some("https://discord.com/profile-webhook")
     );
 }
+
+#[test]
+fn test_profile_debug_time_configuration() {
+    assert_eq!(
+        jmcc::project::ProfileConfig::default_dev().debug_time,
+        Some(true)
+    );
+    assert_eq!(
+        jmcc::project::ProfileConfig::default_release().debug_time,
+        Some(false)
+    );
+
+    let toml_str = r#"
+        [package]
+        name = "test_time"
+        version = "1.0.0"
+        edition = 2026
+
+        [profile.dev]
+        debug_time = false
+
+        [profile.release]
+        debug-time = true
+    "#;
+    let manifest: jmcc::project::Manifest = toml::from_str(toml_str).expect("parse manifest");
+
+    let dev_profile = manifest.profile.get("dev").expect("dev profile");
+    assert_eq!(dev_profile.debug_time, Some(false));
+
+    let rel_profile = manifest.profile.get("release").expect("release profile");
+    assert_eq!(rel_profile.debug_time, Some(true));
+
+    let mut dev_opts = jmcc::CompileOptions::default();
+    dev_profile.apply_to(&mut dev_opts);
+    assert!(!dev_opts.debug_time);
+
+    let mut rel_opts = jmcc::CompileOptions {
+        debug_time: false,
+        ..Default::default()
+    };
+    rel_profile.apply_to(&mut rel_opts);
+    assert!(rel_opts.debug_time);
+}
+
+#[test]
+fn test_profile_minify_configuration() {
+    assert_eq!(
+        jmcc::project::ProfileConfig::default_dev().minify,
+        Some(false)
+    );
+    assert_eq!(
+        jmcc::project::ProfileConfig::default_release().minify,
+        Some(true)
+    );
+
+    let toml_str = r#"
+        [package]
+        name = "test_minify"
+        version = "1.0.0"
+        edition = 2026
+
+        [profile.dev]
+        minify = true
+
+        [profile.release]
+        minify = false
+    "#;
+    let manifest: jmcc::project::Manifest = toml::from_str(toml_str).expect("parse manifest");
+
+    let dev_profile = manifest.profile.get("dev").expect("dev profile");
+    assert_eq!(dev_profile.minify, Some(true));
+
+    let rel_profile = manifest.profile.get("release").expect("release profile");
+    assert_eq!(rel_profile.minify, Some(false));
+
+    let mut dev_opts = jmcc::CompileOptions::default();
+    dev_profile.apply_to(&mut dev_opts);
+    assert!(dev_opts.minify);
+
+    let mut rel_opts = jmcc::CompileOptions {
+        minify: true,
+        ..Default::default()
+    };
+    rel_profile.apply_to(&mut rel_opts);
+    assert!(!rel_opts.minify);
+}

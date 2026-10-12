@@ -108,6 +108,14 @@ pub struct Player {
     pub is_sprinting: bool,
     /// Whether the player is gliding.
     pub is_gliding: bool,
+    /// Whether the player is currently on the ground.
+    pub is_on_ground: bool,
+    /// Ping in milliseconds.
+    pub ping: f64,
+    /// Vehicle entity type if riding, or empty string.
+    pub vehicle: String,
+    /// Player pose ("STANDING", "SWIMMING", "`FALL_FLYING`", etc.).
+    pub pose: String,
     /// The spawn point, if set.
     pub spawn_point: Option<Position>,
 }
@@ -142,6 +150,10 @@ impl Player {
             is_sneaking: false,
             is_sprinting: false,
             is_gliding: false,
+            is_on_ground: true,
+            ping: 50.0,
+            vehicle: String::new(),
+            pose: "STANDING".to_owned(),
             spawn_point: None,
         }
     }

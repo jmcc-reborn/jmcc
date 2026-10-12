@@ -174,7 +174,7 @@ impl Analyzer<'_> {
             return self.method_error(Some(class_info.name.clone()), &method_str, &c.span);
         }
 
-        if !resolved_target_ty.is_unknown() || self.edition >= 2026 {
+        if !resolved_target_ty.is_unknown() && !matches!(resolved_target_ty, Type::InferVar(_)) {
             let type_name = self.format_type(&resolved_target_ty);
             return self.method_error(Some(type_name), &method_str, &c.span);
         }

@@ -356,6 +356,7 @@ impl ImportResolver {
                 implements: Self::map_strs(dst, src, &c.implements),
                 body: self.remap_body(&c.body, src, dst, m),
                 is_inline: c.is_inline,
+                is_cached: c.is_cached,
                 lang_item: c.lang_item,
                 is_dict: c.is_dict,
                 is_exported: c.is_exported,
@@ -391,14 +392,12 @@ impl ImportResolver {
                     .else_body
                     .as_ref()
                     .map(|b| self.remap_body(b, src, dst, m)),
-                is_not: i.is_not,
                 span: i.span.clone(),
             }),
             Statement::While(w) => Statement::While(WhileStmt {
                 label: w.label.map(|l| Self::map_str(dst, src, l)),
                 condition: m[&w.condition],
                 body: self.remap_body(&w.body, src, dst, m),
-                is_not: w.is_not,
                 span: w.span.clone(),
             }),
             Statement::For(f) => Statement::For(ForStmt {
@@ -435,6 +434,7 @@ impl ImportResolver {
                     .collect(),
                 value: d.value.map(|v| m[&v]),
                 is_exported: d.is_exported,
+                is_cached: d.is_cached,
                 span: d.span.clone(),
             }),
             Statement::Assign(a) => Statement::Assign(AssignStmt {
@@ -477,6 +477,9 @@ impl ImportResolver {
                 exception_type: th.exception_type.map(|t| Self::map_str(dst, src, t)),
                 span: th.span.clone(),
             }),
+            Statement::Cfg(cfg, inner) => {
+                Statement::Cfg(cfg.clone(), Box::new(self.remap_stmt(inner, src, dst, m)))
+            }
         }
     }
 }

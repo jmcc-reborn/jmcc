@@ -2,7 +2,7 @@
   "name": "justcode-lang",
   "displayName": "JustCode for JustMC (JMCC)",
   "description": "Full Language Server (diagnostics, IntelliSense, definitions, hover, rename, semantic tokens) and syntax highlighting for JustCode (.jc)",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "jmcc",
   "icon": "media/logo.png",
   "engines": {
@@ -54,6 +54,11 @@
         "category": "JustCode"
       },
       {
+        "command": "jmc.analyzer.showLogs",
+        "title": "JMC Analyzer: Show Language Server Logs",
+        "category": "JustCode"
+      },
+      {
         "command": "jmc.analyzer.downloadServer",
         "title": "JMC Analyzer: Download / Update Language Server",
         "category": "JustCode"
@@ -81,6 +86,11 @@
           "type": "string",
           "default": "",
           "description": "Path to the JustCode standard library directory (std). Defaults to the bundled standard library included with this extension."
+        },
+        "jmc.analyzer.logFile": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path for the jmc-analyzer language server log file. When empty, defaults to a system temporary file."
         },
         "jmc.analyzer.trace.server": {
           "type": "string",

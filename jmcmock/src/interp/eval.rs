@@ -111,6 +111,44 @@ impl<'a> Runtime<'a> {
             }
             GameValueId::EventItem => return Ok(stream.event_item.clone()),
             GameValueId::EventSlot => value::number(stream.event_slot),
+            GameValueId::EventFromLocation => {
+                if let Some(pos) = stream.from_location {
+                    pos.to_value()
+                } else {
+                    let target = self.primary(stream)?;
+                    self.world()
+                        .position_of(target)
+                        .ok_or_else(|| RuntimeError::NoTarget {
+                            context: stream.origin.clone(),
+                        })?
+                        .to_value()
+                }
+            }
+            GameValueId::EventNewLocation => {
+                if let Some(pos) = stream.to_location {
+                    pos.to_value()
+                } else {
+                    let target = self.primary(stream)?;
+                    self.world()
+                        .position_of(target)
+                        .ok_or_else(|| RuntimeError::NoTarget {
+                            context: stream.origin.clone(),
+                        })?
+                        .to_value()
+                }
+            }
+            GameValueId::EventDamageCause => value::text(stream.damage_cause.clone()),
+            GameValueId::EventBlockLocation => {
+                if let Some(pos) = stream.block_location {
+                    pos.to_value()
+                } else {
+                    let target = self.primary(stream)?;
+                    self.world().position_of(target).map_or_else(
+                        || value::location(0.0, 64.0, 0.0, 0.0, 0.0),
+                        |pos| pos.to_value(),
+                    )
+                }
+            }
             GameValueId::OpenInventoryTitle => value::text(stream.inventory_title.clone()),
             GameValueId::SelectionSize => value::number(count_as_number(stream.selection.len())),
             // Кто есть цель: у игроков и сущностей мок-мира есть имя и UUID.
@@ -147,6 +185,14 @@ impl<'a> Runtime<'a> {
                     })?
                     .to_value()
             }
+            GameValueId::BlockBeneath => {
+                let target = self.primary(stream)?;
+                self.world().position_of(target).map_or_else(
+                    || value::location(0.0, 63.0, 0.0, 0.0, 0.0),
+                    |pos| value::location(pos.x, (pos.y - 1.0).floor(), pos.z, pos.yaw, pos.pitch),
+                )
+            }
+            GameValueId::WalkingSpeed => value::number(0.1),
             GameValueId::CurrentHealth => {
                 let target = self.primary(stream)?;
                 match target {
@@ -243,6 +289,63 @@ impl<'a> Runtime<'a> {
             GameValueId::WorldWeather => value::text(self.world().weather().to_owned()),
             GameValueId::WorldTime | GameValueId::WorldGameTime => {
                 value::number(self.world().world_time())
+            }
+            GameValueId::ServerTps => value::number(20.0),
+            GameValueId::Ping => {
+                let target = self.primary(stream)?;
+                match target {
+                    Target::Player(index) => {
+                        value::number(self.world().players().get(index).map_or(50.0, |p| p.ping))
+                    }
+                    Target::Entity(_) => value::number(0.0),
+                }
+            }
+            GameValueId::Pitch => {
+                let target = self.primary(stream)?;
+                let pos =
+                    self.world()
+                        .position_of(target)
+                        .ok_or_else(|| RuntimeError::NoTarget {
+                            context: stream.origin.clone(),
+                        })?;
+                value::number(pos.pitch)
+            }
+            GameValueId::Yaw => {
+                let target = self.primary(stream)?;
+                let pos =
+                    self.world()
+                        .position_of(target)
+                        .ok_or_else(|| RuntimeError::NoTarget {
+                            context: stream.origin.clone(),
+                        })?;
+                value::number(pos.yaw)
+            }
+            GameValueId::Vehicle => {
+                let target = self.primary(stream)?;
+                match target {
+                    Target::Player(index) => value::text(
+                        self.world()
+                            .players()
+                            .get(index)
+                            .map_or_else(String::new, |p| p.vehicle.clone()),
+                    ),
+                    Target::Entity(_) => value::text(String::new()),
+                }
+            }
+            GameValueId::Pose => {
+                let target = self.primary(stream)?;
+                match target {
+                    Target::Player(index) => value::text(
+                        self.world()
+                            .players()
+                            .get(index)
+                            .map_or_else(|| "STANDING".to_owned(), |p| p.pose.clone()),
+                    ),
+                    Target::Entity(_) => value::text("STANDING".to_owned()),
+                }
+            }
+            GameValueId::DisplayName => {
+                value::text(self.world().target_name(self.primary(stream)?))
             }
             other => {
                 self.unimplemented(format!("the game value '{}'", game_value_name(other)))?;

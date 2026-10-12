@@ -60,8 +60,26 @@ pub struct CompileOptions {
     pub offline: bool,
     /// Build test code and preserve test functions (false = strip all @test functions).
     pub test_mode: bool,
+    /// Requested features to enable for the root package.
+    pub features: Vec<String>,
+    /// Enable all available features.
+    pub all_features: bool,
+    /// Do not enable default features.
+    pub no_default_features: bool,
+    /// Features activated per package (`package_name` -> set of features).
+    pub package_features: std::collections::HashMap<String, std::collections::HashSet<String>>,
+    /// Known feature names for validation (if feature checking enabled).
+    pub known_features: Option<std::collections::HashSet<String>>,
     /// Disable action line limit splitting.
     pub disable_action_limit: bool,
+    /// Measure and display handler execution time in chat/logs.
+    pub debug_time: bool,
+    /// Explicit CLI override for `debug_time` (if specified via `--debug-time`).
+    pub debug_time_override: Option<bool>,
+    /// Minify emitted JSON module (compact representation without whitespace/newlines).
+    pub minify: bool,
+    /// Explicit CLI override for `minify` (if specified via `--minify`).
+    pub minify_override: Option<bool>,
     /// Upload compiled module to server.
     pub upload: bool,
     /// Target service for module uploading (official `JustMC` or Discord webhook).
@@ -88,7 +106,16 @@ impl Default for CompileOptions {
             locked: false,
             offline: false,
             test_mode: false,
+            features: Vec::new(),
+            all_features: false,
+            no_default_features: false,
+            package_features: std::collections::HashMap::new(),
+            known_features: None,
             disable_action_limit: false,
+            debug_time: true,
+            debug_time_override: None,
+            minify: false,
+            minify_override: None,
             upload: false,
             upload_target: None,
             webhook_url: None,
@@ -138,10 +165,15 @@ pub fn compile_file(
     }
 
     let t0 = std::time::Instant::now();
-    let mut ast = ast::import::parse_file_with_packages(
+    let root_features: std::collections::HashSet<String> =
+        options.features.iter().cloned().collect();
+    let mut ast = ast::import::parse_file_with_features(
         input_path,
         options.edition,
         options.package_roots.clone(),
+        root_features,
+        options.package_features.clone(),
+        options.known_features.clone(),
     )?;
 
     if !options.test_mode {
@@ -212,7 +244,7 @@ pub fn compile_file(
 
     let t4 = std::time::Instant::now();
     tracing::info!("Expanding operator overloads...");
-    let hir = ir::hir_expand::expand_overloads(&ast, &types, &mut ir_ctx, &hir)
+    let hir = ir::hir_expand::expand_overloads(&ast, &types, &mut ir_ctx, &hir, options.edition)
         .map_err(|e| color_eyre::eyre::eyre!("Overload expansion failed: {e}"))?;
     tracing::info!(
         "Phase 5 [Overloads Expand]: {:.2}ms",
@@ -259,6 +291,7 @@ pub fn compile_file(
     let t7 = std::time::Instant::now();
     let mut cg = ir::codegen::CodeGen::new(options.target, options.edition);
     cg.disable_action_limit = options.disable_action_limit;
+    cg.debug_time = options.debug_time;
     let module = cg.generate(&mir)?;
     tracing::info!(
         "Phase 8 [Codegen]: {:.2}ms",
@@ -266,7 +299,11 @@ pub fn compile_file(
     );
 
     let t8 = std::time::Instant::now();
-    let json_str = serde_json::to_string_pretty(&module)?;
+    let json_str = if options.minify {
+        serde_json::to_string(&module)?
+    } else {
+        serde_json::to_string_pretty(&module)?
+    };
     if options.emit_json {
         let json_path = options.output.as_ref().map_or_else(
             || parent.join(format!("{stem}.json")),
@@ -361,11 +398,45 @@ pub fn compile_project(
         if overrides.webhook_url.is_some() {
             options.webhook_url = overrides.webhook_url.clone();
         }
+        if let Some(dt) = overrides.debug_time_override {
+            options.debug_time = dt;
+        }
+        if let Some(m) = overrides.minify_override {
+            options.minify = m;
+        }
+        if overrides.all_features {
+            options.all_features = true;
+        }
+        if overrides.no_default_features {
+            options.no_default_features = true;
+        }
+        if !overrides.features.is_empty() {
+            options.features.extend(overrides.features.clone());
+        }
     }
 
-    // Resolve dependencies
-    let graph = project.resolve_dependencies_ext(false, options.locked, options.offline)?;
+    let mut requested_features = options.features.clone();
+    if options.all_features {
+        requested_features.extend(project.manifest.all_features());
+    } else if !options.no_default_features {
+        requested_features.extend(project.manifest.default_features());
+    }
+
+    // Resolve dependencies with features
+    let graph = project.resolve_dependencies_with_features(
+        false,
+        options.locked,
+        options.offline,
+        &requested_features,
+    )?;
     options.package_roots = graph.to_package_roots();
+    options.package_features = graph.package_features.clone();
+    if let Some(root_feats) = graph.package_features.get(project.name()) {
+        options.features = root_feats.iter().cloned().collect();
+    }
+    if !project.manifest.features.is_empty() {
+        options.known_features = Some(project.manifest.all_features().into_iter().collect());
+    }
 
     let entry_point = project.entry_point()?;
     tracing::info!("Project entry point: '{}'", entry_point.display());

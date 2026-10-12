@@ -29,10 +29,23 @@ use super::symbols::{provide_document_symbols, provide_workspace_symbols};
 /// # Errors
 ///
 /// Returns an error if the server connection fails or receives an unrecoverable protocol error.
+#[expect(
+    clippy::too_many_lines,
+    clippy::let_underscore_must_use,
+    clippy::let_underscore_untyped,
+    reason = "Server main loop, capability setup, and fire-and-forget error responses"
+)]
 pub fn run_server(
     cli_std_path: Option<std::path::PathBuf>,
+    cli_log_file: Option<std::path::PathBuf>,
 ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let log_path = super::logging::init_logging(cli_log_file);
     let (connection, io_threads) = Connection::stdio();
+    super::logging::set_client_sender(connection.sender.clone());
+
+    if let Some(path) = &log_path {
+        tracing::info!("JMC Analyzer starting. Log file: {}", path.display());
+    }
 
     let server_capabilities = ServerCapabilities {
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
@@ -94,6 +107,7 @@ pub fn run_server(
         if let Some(loc) = &params.locale {
             jmcc::i18n::set_lang_by_name(loc);
             state.lang = jmcc::i18n::current_lang();
+            tracing::info!("Locale set to: {:?}", state.lang);
         }
         #[expect(
             deprecated,
@@ -105,24 +119,92 @@ pub fn run_server(
         });
         if let Some(uri) = uri {
             state.workspace_root = ServerState::url_to_path(&uri);
+            tracing::info!("Workspace root: {:?}", state.workspace_root);
         }
     }
+
+    tracing::info!("JMC Analyzer initialized successfully");
 
     for msg in &connection.receiver {
         match msg {
             Message::Request(req) => {
-                if connection.handle_shutdown(&req)? {
-                    return Ok(());
+                match connection.handle_shutdown(&req) {
+                    Ok(true) => {
+                        tracing::info!("Shutting down JMC Analyzer");
+                        super::logging::clear_client_sender();
+                        return Ok(());
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        tracing::error!("Error handling shutdown request: {err}");
+                    }
                 }
-                handle_request(&state, &connection, req)?;
+
+                let req_id = req.id.clone();
+                let req_method = req.method.clone();
+                let catch_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handle_request(&state, &connection, req)
+                }));
+
+                match catch_res {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        tracing::error!("Error handling request {req_method}: {err}");
+                        let resp = Response::new_err(
+                            req_id,
+                            lsp_server::ErrorCode::InternalError as i32,
+                            format!("Internal error in {req_method}: {err}"),
+                        );
+                        let _ = connection.sender.send(Message::Response(resp));
+                    }
+                    Err(panic_payload) => {
+                        let panic_msg = panic_payload.downcast_ref::<&str>().map_or_else(
+                            || {
+                                panic_payload
+                                    .downcast_ref::<String>()
+                                    .map_or("Unknown panic", |s| s.as_str())
+                            },
+                            |s| *s,
+                        );
+                        tracing::error!("Panic in request {req_method}: {panic_msg}");
+                        let resp = Response::new_err(
+                            req_id,
+                            lsp_server::ErrorCode::InternalError as i32,
+                            format!("Panic in {req_method}: {panic_msg}"),
+                        );
+                        let _ = connection.sender.send(Message::Response(resp));
+                    }
+                }
             }
             Message::Notification(not) => {
-                handle_notification(&mut state, &connection, not)?;
+                let not_method = not.method.clone();
+                let catch_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handle_notification(&mut state, &connection, not)
+                }));
+
+                match catch_res {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        tracing::error!("Error handling notification {not_method}: {err}");
+                    }
+                    Err(panic_payload) => {
+                        let panic_msg = panic_payload.downcast_ref::<&str>().map_or_else(
+                            || {
+                                panic_payload
+                                    .downcast_ref::<String>()
+                                    .map_or("Unknown panic", |s| s.as_str())
+                            },
+                            |s| *s,
+                        );
+                        tracing::error!("Panic in notification {not_method}: {panic_msg}");
+                    }
+                }
             }
             Message::Response(_) => {}
         }
     }
 
+    super::logging::clear_client_sender();
     io_threads.join()?;
     Ok(())
 }

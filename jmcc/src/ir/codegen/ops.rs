@@ -83,19 +83,14 @@ impl CodeGen {
                     ..
                 } = &var_val
                 {
-                    crate::ir::opt::mir::common::is_plain_temp(target_name, &["__ct", "__mt"])
+                    crate::ir::opt::mir::common::is_temp_var(
+                        target_name,
+                        &["__ct", "__mt", "__inl_"],
+                    )
                 } else {
                     false
                 };
-                let is_src_temp = if let Value::Variable {
-                    variable: src_name, ..
-                } = &val
-                {
-                    crate::ir::opt::mir::common::is_temp_var(src_name, &["__ct", "__mt"])
-                } else {
-                    false
-                };
-                if is_target_temp && is_src_temp && val != var_val {
+                if is_target_temp && matches!(val, Value::Variable { .. }) && val != var_val {
                     if let Value::Variable {
                         variable: target_name,
                         ..
@@ -153,6 +148,25 @@ impl CodeGen {
             &mut final_values,
             &mut used,
         );
+
+        let is_var_cmp = matches!(
+            action_id,
+            ActionId::IfVariableEquals
+                | ActionId::IfVariableNotEquals
+                | ActionId::IfVariableGreater
+                | ActionId::IfVariableGreaterOrEquals
+                | ActionId::IfVariableLess
+                | ActionId::IfVariableLessOrEquals
+                | ActionId::IfVariableInRange
+                | ActionId::IfVariableNumberInRange
+        );
+        if is_var_cmp {
+            for (k, v) in final_values.iter_mut() {
+                if matches!(k.as_ref(), "value" | "compare" | "min" | "max") {
+                    self.normalize_comparison_variable(v, ops, &name);
+                }
+            }
+        }
 
         for (k, v) in final_values {
             builder = builder.with_value(k, v);
@@ -278,5 +292,52 @@ impl CodeGen {
             });
         }
         Ok(())
+    }
+
+    fn normalize_comparison_variable(
+        &mut self,
+        val: &mut Value<'static>,
+        ops: &mut Vec<Op<'static>>,
+        action_name: &str,
+    ) {
+        match val {
+            Value::Variable { variable, scope }
+                if *scope != VariableScope::Line && !variable.contains('%') =>
+            {
+                Self::emit_comparison_scope_warning(variable, action_name);
+                let temp = self.fresh_temp();
+                ops.push(Op::variable_set_value(temp.clone(), val.clone()));
+                *val = temp;
+            }
+            Value::Array { values } => {
+                for item in values.iter_mut().flatten() {
+                    self.normalize_comparison_variable(item, ops, action_name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn emit_comparison_scope_warning(var_name: &str, action_name: &str) {
+        tracing::warn!(
+            var_name,
+            action_name,
+            "non-line variable used in comparison; promoting to line scope for JustMC compatibility"
+        );
+        #[expect(clippy::print_stderr, reason = "compiler warning output to stderr")]
+        {
+            match crate::i18n::current_lang() {
+                crate::i18n::Lang::Ru => {
+                    eprintln!(
+                        "\x1b[1;33mпредупреждение\x1b[0m: не-line переменная '{var_name}' в действии '{action_name}'; скопирована в строчную область (line) для совместимости с JustMC"
+                    );
+                }
+                crate::i18n::Lang::En => {
+                    eprintln!(
+                        "\x1b[1;33mwarning\x1b[0m: non-line variable '{var_name}' in action '{action_name}'; promoted to line scope for JustMC compatibility"
+                    );
+                }
+            }
+        }
     }
 }

@@ -106,11 +106,34 @@ export class vector {
     /// Normalizes the vector to unit length.
     @alias("нормализовать")
     inline function normalize(self: vector) -> vector {
-        var len = variable::get_vector_length(self, "LENGTH");
-        if len == 0 {
-            return self;
-        }
-        return variable::divide_vector(self, vector(len, len, len));
+        return variable::set_vector_length(self, 1);
+    }
+
+    /// RU:
+    /// Устанавливает длину вектора.
+    /// EN:
+    /// Sets the length of the vector.
+    @alias("задать_длину")
+    inline function set_length(self: vector, len: number) -> vector {
+        return variable::set_vector_length(self, len);
+    }
+
+    /// RU:
+    /// Вычисляет угол между двумя векторами.
+    /// EN:
+    /// Computes the angle between two vectors.
+    @alias("угол_к")
+    inline function angle_to(self: vector, other: vector, units: text = "DEGREES") -> number {
+        return variable::get_angle_between_vectors(self, other, angle_units = units);
+    }
+
+    /// RU:
+    /// Вычисляет среднюю точку между двумя векторами.
+    /// EN:
+    /// Computes the midpoint between two vectors.
+    @alias("средняя_точка")
+    inline function midpoint(self: vector, other: vector) -> vector {
+        return variable::get_midpoint_between_vectors(self, other);
     }
 
     /// RU:

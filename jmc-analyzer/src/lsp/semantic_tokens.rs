@@ -351,10 +351,6 @@ impl TokenCollector<'_> {
                 self.collect_expr(a.value);
             }
             Statement::If(i) => {
-                if i.is_not {
-                    self.add_ident_span(&i.span, "not", TokenType::Keyword, 0);
-                    self.add_ident_span(&i.span, "не", TokenType::Keyword, 0);
-                }
                 self.collect_expr(i.condition);
                 self.collect_statements(&i.then_body, inside_class);
                 for (cond, body) in &i.elif_branches {
@@ -366,10 +362,6 @@ impl TokenCollector<'_> {
                 }
             }
             Statement::While(w) => {
-                if w.is_not {
-                    self.add_ident_span(&w.span, "not", TokenType::Keyword, 0);
-                    self.add_ident_span(&w.span, "не", TokenType::Keyword, 0);
-                }
                 self.collect_expr(w.condition);
                 self.collect_statements(&w.body, inside_class);
             }
@@ -415,6 +407,7 @@ impl TokenCollector<'_> {
                 }
             }
             Statement::Import(_) | Statement::Break(_) | Statement::Continue(_) => {}
+            Statement::Cfg(_, inner) => self.collect_statement(inner, inside_class),
         }
     }
 

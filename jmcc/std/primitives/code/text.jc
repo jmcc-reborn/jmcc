@@ -123,12 +123,67 @@ export class text {
     }
 
     /// RU:
-    /// Заменяет вхождения регулярного выражения на указанную строку.
+    /// Заменяет вхождения подстроки на указанный текст.
+    /// EN:
+    /// Replaces occurrences of a substring with replacement text.
+    @alias("заменить")
+    inline function replace(
+        self: text,
+        pattern: text,
+        replacement: text,
+        first: text = "ANY",
+        ignore_case: text = "FALSE",
+    ) -> text {
+        return variable::replace_text(
+            self,
+            pattern,
+            replacement,
+            first = first,
+            ignore_case = ignore_case,
+        );
+    }
+
+    /// RU:
+    /// Заменяет вхождения регулярного выражения на указанный текст.
     /// EN:
     /// Replaces regex occurrences with replacement text.
-    @alias("заменить")
-    inline function replace(self: text, regex: text, replacement: text) -> text {
-        return variable::regex_replace_text(self, regex, replacement);
+    @alias("заменить_регекс")
+    @alias("заменить_регулярку")
+    inline function replace_regex(
+        self: text,
+        regex: text,
+        replacement: text,
+        first: text = "ANY",
+        ignore_case: text = "FALSE",
+        multiline: text = "FALSE",
+        literal: text = "FALSE",
+        unix_lines: text = "FALSE",
+        comments: text = "FALSE",
+        dot_matches_all: text = "FALSE",
+        cannon_eq: text = "FALSE",
+    ) -> text {
+        return variable::regex_replace_text(
+            self,
+            regex,
+            replacement,
+            first = first,
+            ignore_case = ignore_case,
+            multiline = multiline,
+            literal = literal,
+            unix_lines = unix_lines,
+            comments = comments,
+            dot_matches_all = dot_matches_all,
+            cannon_eq = cannon_eq,
+        );
+    }
+
+    /// RU:
+    /// Преобразует текст в массив отдельных символов.
+    /// EN:
+    /// Converts text into an array of individual characters.
+    @alias("символы")
+    inline function chars(self: text) -> array<text> {
+        return variable::text_to_chars(self, chars_type = "CHARS");
     }
 
     /// RU:
@@ -137,7 +192,7 @@ export class text {
     /// Splits text into an array of substrings by delimiter.
     @alias("разбить")
     @alias("разделить")
-    inline function split(self: text, delimiter: text) -> array {
+    inline function split(self: text, delimiter: text) -> array<text> {
         return variable::split_text(self, delimiter);
     }
 
@@ -148,6 +203,15 @@ export class text {
     @alias("начинается_с")
     inline function starts_with(self: text, prefix: text) -> boolean {
         return variable::text_starts_with(self, [prefix]);
+    }
+
+    /// RU:
+    /// Проверяет, заканчивается ли текст указанным суффиксом.
+    /// EN:
+    /// Checks if the text ends with the specified suffix.
+    @alias("заканчивается_на")
+    inline function ends_with(self: text, suffix: text) -> boolean {
+        return variable::text_ends_with(self, [suffix]);
     }
 
     /// RU:

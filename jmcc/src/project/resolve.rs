@@ -1,6 +1,6 @@
 //! Recursive dependency graph resolver.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use tracing::debug;
@@ -29,6 +29,7 @@ pub struct ResolvedPackage {
 #[derive(Clone, Debug, Default)]
 pub struct PackageGraph {
     pub packages: BTreeMap<String, ResolvedPackage>,
+    pub package_features: HashMap<String, HashSet<String>>,
 }
 
 impl PackageGraph {
@@ -65,6 +66,7 @@ pub struct DependencyResolver {
     lockfile: Option<Lockfile>,
     visiting: Vec<String>,
     resolved: BTreeMap<String, ResolvedPackage>,
+    package_features: HashMap<String, HashSet<String>>,
 }
 
 impl DependencyResolver {
@@ -76,6 +78,7 @@ impl DependencyResolver {
             lockfile: None,
             visiting: Vec::new(),
             resolved: BTreeMap::new(),
+            package_features: HashMap::new(),
         }
     }
 
@@ -98,19 +101,45 @@ impl DependencyResolver {
     /// # Errors
     /// Returns an error if dependencies cannot be located, parsed, or if a cycle is detected.
     pub fn resolve_all(
-        mut self,
+        self,
         root_manifest: &Manifest,
         root_dir: &Path,
         include_dev: bool,
     ) -> Result<PackageGraph> {
+        let default_feats = root_manifest.default_features();
+        self.resolve_all_with_features(root_manifest, root_dir, include_dev, &default_feats)
+    }
+
+    /// Recursively resolves all dependencies starting from the root manifest with explicitly requested features.
+    ///
+    /// # Errors
+    /// Returns an error if dependencies cannot be located, parsed, or if a cycle is detected.
+    pub fn resolve_all_with_features(
+        mut self,
+        root_manifest: &Manifest,
+        root_dir: &Path,
+        include_dev: bool,
+        root_features: &[String],
+    ) -> Result<PackageGraph> {
         let root_name = root_manifest.name(root_dir).unwrap_or("root").to_owned();
 
+        let (enabled_root_feats, activated_deps, dep_feats) =
+            root_manifest.resolve_features(root_features);
+        self.package_features
+            .insert(root_name.clone(), enabled_root_feats);
+
         self.visiting.push(root_name);
-        self.resolve_deps_recursive(&root_manifest.all_dependencies(include_dev), root_dir)?;
+        self.resolve_deps_recursive(
+            &root_manifest.all_dependencies(include_dev),
+            root_dir,
+            &activated_deps,
+            &dep_feats,
+        )?;
         self.visiting.pop();
 
         Ok(PackageGraph {
             packages: self.resolved,
+            package_features: self.package_features,
         })
     }
 
@@ -118,8 +147,16 @@ impl DependencyResolver {
         &mut self,
         deps: &BTreeMap<String, Dependency>,
         current_dir: &Path,
+        activated_deps: &HashSet<String>,
+        forwarded_dep_feats: &HashMap<String, HashSet<String>>,
     ) -> Result<()> {
         for (dep_name, dep) in deps {
+            // If dependency is optional, it must be activated via dep:<name>
+            if dep.is_optional() && !activated_deps.contains(dep_name) {
+                debug!(dep = dep_name, "Skipping inactive optional dependency");
+                continue;
+            }
+
             // Check for circular dependency
             if self.visiting.contains(dep_name) {
                 let mut cycle = self.visiting.clone();
@@ -129,9 +166,13 @@ impl DependencyResolver {
                 });
             }
 
-            // Already resolved
-            if self.resolved.contains_key(dep_name) {
-                continue;
+            let mut requested_for_dep = Vec::new();
+            if dep.default_features() {
+                requested_for_dep.push("default".to_owned());
+            }
+            requested_for_dep.extend(dep.features().iter().cloned());
+            if let Some(forwarded) = forwarded_dep_feats.get(dep_name) {
+                requested_for_dep.extend(forwarded.iter().cloned());
             }
 
             let detailed = dep.detailed();
@@ -165,8 +206,20 @@ impl DependencyResolver {
 
             // Recursively resolve sub-dependencies
             if let Some(sub_manifest) = manifest {
+                let (sub_enabled_feats, sub_activated_deps, sub_dep_feats) =
+                    sub_manifest.resolve_features(&requested_for_dep);
+                self.package_features
+                    .entry(dep_name.clone())
+                    .or_default()
+                    .extend(sub_enabled_feats);
+
                 self.visiting.push(dep_name.clone());
-                self.resolve_deps_recursive(&sub_manifest.dependencies, &dep_root)?;
+                self.resolve_deps_recursive(
+                    &sub_manifest.dependencies,
+                    &dep_root,
+                    &sub_activated_deps,
+                    &sub_dep_feats,
+                )?;
                 self.visiting.pop();
             }
         }

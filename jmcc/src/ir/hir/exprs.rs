@@ -140,6 +140,17 @@ impl HirBuilder<'_> {
 
     #[instrument(skip(self, bin), level = "trace")]
     fn conv_binary(&mut self, bin: &BinaryExpr) -> Result<Id, IrError> {
+        if matches!(bin.op, BinOp::And | BinOp::Or) {
+            let l = self.conv_expr(bin.left)?;
+            let r = self.conv_expr(bin.right)?;
+            let node = match bin.op {
+                BinOp::And => Hir::And([l, r]),
+                BinOp::Or => Hir::Or([l, r]),
+                _ => unreachable!(),
+            };
+            return Ok(self.add(node));
+        }
+
         let (l, mut b) = self.atomize(bin.left)?;
         let (r, mut rb) = self.atomize(bin.right)?;
         b.append(&mut rb);
@@ -177,6 +188,11 @@ impl HirBuilder<'_> {
 
     #[instrument(skip(self, un), level = "trace")]
     fn conv_unary(&mut self, un: &UnaryExpr) -> Result<Id, IrError> {
+        if un.op == UnOp::Not {
+            let operand = self.conv_expr(un.operand)?;
+            let node = self.add(Hir::Not(operand));
+            return Ok(node);
+        }
         let (operand, b) = self.atomize(un.operand)?;
         // Divergence from `hir_expand::conv_ast_expr` is intentional: here
         // `UnOp::Neg` over a numeric literal is folded in place, whereas there it is not.
@@ -194,7 +210,7 @@ impl HirBuilder<'_> {
     #[instrument(skip(self, c), level = "trace")]
     fn conv_ctor(&mut self, c: &ConstructorExpr) -> Result<Id, IrError> {
         let nid = self.str_lit(self.sym(c.name));
-        let (args, b) = self.conv_args(&c.args, None, false, false)?;
+        let (args, b, _) = self.conv_args(&c.args, None, false, false)?;
         let node = self.add(Hir::Ctor(vec![nid, args].into_boxed_slice()));
         Ok(self.wrap_lets(node, b))
     }

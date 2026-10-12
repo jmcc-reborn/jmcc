@@ -68,12 +68,17 @@ impl<'a> Runtime<'a> {
         }
         let targets = self.resolve_targets(data.targets);
         let origin = format!("event {event}");
+        self.world_mut().uncancel_event();
         for index in indices {
             let mut stream = spawn_stream(targets.clone(), origin.clone());
             stream.chat_message = data.chat_message.clone().unwrap_or_default();
             stream.event_item = data.item.clone();
             stream.event_slot = data.slot.unwrap_or(0.0);
             stream.inventory_title = data.inventory_title.clone().unwrap_or_default();
+            stream.from_location = data.from_location;
+            stream.to_location = data.to_location;
+            stream.damage_cause = data.damage_cause.clone().unwrap_or_default();
+            stream.block_location = data.block_location;
             self.enqueue_handler(stream, index, Vec::new(), None)?;
         }
         self.run_scheduler()

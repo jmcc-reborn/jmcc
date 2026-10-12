@@ -41,6 +41,7 @@ export class Matrix {
     /// Проверяет равенство двух матриц.
     /// EN:
     /// Checks if two matrices are equal.
+    @alias("equals", "равно")
     inline function __equals__(first: Matrix, second: Matrix) -> boolean {
         if (first.rows != second.rows or first.cols != second.cols) {
             return false;
@@ -61,8 +62,9 @@ export class Matrix {
     /// Проверяет неравенство двух матриц.
     /// EN:
     /// Checks if two matrices are not equal.
+    @alias("not_equals", "не_равно")
     inline function __not_equals__(first: Matrix, second: Matrix) -> boolean {
-        return not first.equals(second);
+        return not (first == second);
     }
 
     /// RU:

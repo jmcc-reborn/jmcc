@@ -26,6 +26,9 @@ pub struct ImportResolver {
     root_dir: PathBuf,
     std_lib_dir: PathBuf,
     package_roots: HashMap<String, PathBuf>,
+    package_features: HashMap<String, HashSet<String>>,
+    root_features: HashSet<String>,
+    known_features: Option<HashSet<String>>,
     overlays: HashMap<PathBuf, String>,
     visited: HashSet<PathBuf>,
     global_offset: usize,
@@ -49,6 +52,9 @@ impl ImportResolver {
             std_lib_dir,
             root_dir,
             package_roots: HashMap::new(),
+            package_features: HashMap::new(),
+            root_features: HashSet::new(),
+            known_features: None,
             overlays: HashMap::new(),
             visited: HashSet::new(),
             global_offset: 0,
@@ -66,6 +72,30 @@ impl ImportResolver {
     #[must_use]
     pub fn with_package_roots(mut self, package_roots: HashMap<String, PathBuf>) -> Self {
         self.package_roots = package_roots;
+        self
+    }
+
+    /// Sets enabled features for the root package.
+    #[must_use]
+    pub fn with_root_features(mut self, root_features: HashSet<String>) -> Self {
+        self.root_features = root_features;
+        self
+    }
+
+    /// Sets per-package enabled features.
+    #[must_use]
+    pub fn with_package_features(
+        mut self,
+        package_features: HashMap<String, HashSet<String>>,
+    ) -> Self {
+        self.package_features = package_features;
+        self
+    }
+
+    /// Sets known declared features for typo checking.
+    #[must_use]
+    pub fn with_known_features(mut self, known_features: Option<HashSet<String>>) -> Self {
+        self.known_features = known_features;
         self
     }
 
@@ -140,11 +170,58 @@ pub fn parse_file_with_options(
 /// # Errors
 ///
 /// Returns an error if the source path cannot be resolved, read, or parsed.
-#[instrument(skip(path, package_roots, overlays, custom_std_dir), fields(path = %path.display(), edition), level = "info")]
-pub fn parse_file_with_full_options(
+#[instrument(
+    skip(path, package_roots, root_features, package_features, known_features),
+    fields(path = %path.display(), edition),
+    level = "info"
+)]
+pub fn parse_file_with_features(
     path: &Path,
     edition: u16,
     package_roots: HashMap<String, PathBuf>,
+    root_features: HashSet<String>,
+    package_features: HashMap<String, HashSet<String>>,
+    known_features: Option<HashSet<String>>,
+) -> Result<Ast> {
+    parse_file_with_features_ext(
+        path,
+        edition,
+        package_roots,
+        root_features,
+        package_features,
+        known_features,
+        HashMap::new(),
+        None,
+    )
+}
+
+/// # Errors
+///
+/// Returns an error if the source path cannot be resolved, read, or parsed.
+#[instrument(
+    skip(
+        path,
+        package_roots,
+        root_features,
+        package_features,
+        known_features,
+        overlays,
+        custom_std_dir
+    ),
+    fields(path = %path.display(), edition),
+    level = "info"
+)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Full parameter import resolver configuration"
+)]
+pub fn parse_file_with_features_ext(
+    path: &Path,
+    edition: u16,
+    package_roots: HashMap<String, PathBuf>,
+    root_features: HashSet<String>,
+    package_features: HashMap<String, HashSet<String>>,
+    known_features: Option<HashSet<String>>,
     overlays: HashMap<PathBuf, String>,
     custom_std_dir: Option<PathBuf>,
 ) -> Result<Ast> {
@@ -164,6 +241,9 @@ pub fn parse_file_with_full_options(
     debug!(root_dir = %root_dir.display(), "Current directory resolved");
     let mut resolver = ImportResolver::new(edition, root_dir)
         .with_package_roots(package_roots)
+        .with_root_features(root_features)
+        .with_package_features(package_features)
+        .with_known_features(known_features)
         .with_overlays(overlays);
     if let Some(std_dir) = custom_std_dir {
         let resolved_std = if std_dir.join("std").is_dir() {
@@ -181,6 +261,29 @@ pub fn parse_file_with_full_options(
     let mut ast = resolver.resolve(path)?;
     crate::ast::lambda_lift::lift_lambdas(&mut ast);
     Ok(ast)
+}
+
+/// # Errors
+///
+/// Returns an error if the source path cannot be resolved, read, or parsed.
+#[instrument(skip(path, package_roots, overlays, custom_std_dir), fields(path = %path.display(), edition), level = "info")]
+pub fn parse_file_with_full_options(
+    path: &Path,
+    edition: u16,
+    package_roots: HashMap<String, PathBuf>,
+    overlays: HashMap<PathBuf, String>,
+    custom_std_dir: Option<PathBuf>,
+) -> Result<Ast> {
+    parse_file_with_features_ext(
+        path,
+        edition,
+        package_roots,
+        HashSet::new(),
+        HashMap::new(),
+        None,
+        overlays,
+        custom_std_dir,
+    )
 }
 
 /// `std` library directory (`<...>/jmcc/std`) for the current working directory.

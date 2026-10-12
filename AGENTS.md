@@ -11,6 +11,7 @@ Three MCP servers are available (`rust-analyzer`, `cargo`, `cratesio`). Use thei
 5. **Language source of truth:** The normative language specification is in [`SPECIFICATION.md`](SPECIFICATION.md) ([`SPECIFICATION_RU.md`](SPECIFICATION_RU.md)), developer guide in [`GUIDE.md`](GUIDE.md) ([`GUIDE_RU.md`](GUIDE_RU.md)), and standard library in `jmcc/std/**.jc`. Operators (`+`, `==`, `in`, `+=`, etc.) resolve to `__add__`, `__equals__`, `__contains__`, `__iadd__`, etc. on `@lang_item` classes in `jmcc/std/primitives/code/*.jc`. To change operator behavior, edit the `.jc` standard library, not compiler internals.
 6. **Trust the compiler, not assumptions.** Claims about compiler pass operations or code generation must be backed by compiling a fixture and verifying emitted artifacts.
 7. **No Implicit Fallbacks (Никогда не добавлять неявные фоллбеки).** Strive to NEVER add fallbacks that guess user intent or silently paper over invalid code, missing decorators, or misplaced imports. If code violates language semantics, is missing a required annotation (e.g. `@getter` / `@setter` on `__subscript__`), or uses an invalid path: emit a clear, actionable compile-time error with a suggestion (`did you mean '...'?`), never a silent fallback.
+8. **JustMC Variable Default Values (Переменные по умолчанию):** В рантайме JustMC все переменные по умолчанию всегда равны нулю (`0`), поэтому чтение неинициализированной переменной не приводит к ошибкам времени выполнения.
 
 ### Cargo Operations via MCP
 
@@ -104,7 +105,7 @@ Both `Hir` (`src/ir/hir/mod.rs`) and `Mir` (`src/ir/mir/mod.rs`) are `egg::defin
 
 ## Output Structure
 
-Emitted JSON modules represent `Module { handlers: Vec<Line> }`. Handlers are sorted by `(Kind, BodyLength)`: events, functions, then processes. `CodeGen` automatically wraps each handler body in `controller_measure_time` instrumentation. Top-level statements outside event blocks are grouped into a synthetic `world_start` event.
+Emitted JSON modules represent `Module { handlers: Vec<Line> }`. Handlers are sorted by `(Kind, BodyLength)`: events, functions, then processes. `CodeGen` wraps each handler body in `controller_measure_time` instrumentation when `debug_time` is enabled in the profile (`true` by default in `dev`, `false` by default in `release`). Top-level statements outside event blocks are grouped into a synthetic `world_start` event.
 
 ---
 
@@ -142,6 +143,7 @@ JustMC and `jmcmock` define four distinct variable scopes with strictly defined 
 - **`game` / `global` (Global Execution Scope)**: Globally accessible from any location (any event, process, or function) throughout the entire runtime session. Cleared only on world reset.
 - **`local` (Execution Root Scope)**: Scoped to the entire execution tree originating from a root entry point (such as an event handler or spawned process). Shared across all nested synchronous function call frames invoked within that branch, but completely isolated between different concurrent processes or distinct event triggers.
 - **`line` (Call Frame Scope)**: The strictest scope with immediate frame isolation. Accessible only within the current call frame (`stream.line`). Discarded immediately upon frame return; invisible to caller frames and newly invoked callee frames (unless explicitly forwarded via parameters, as handled by `split_long_handlers`). Default scope in Edition 2026.
+- **Access Complexity & No Scope Promotion**: Variable lookups and assignments across ALL scopes (`save`, `game`, `local`, `line`) run in $O(1)$ time in JustMC runtime — physically they are backed by the same hash map lookup mechanism. Synthetic "scope promotion" or variable caching (e.g. promoting `save` or `game` variables to temporary `line` variables) does not improve runtime performance and is harmful because it injects unnecessary copy actions into the action line.
 
 ### Declarative JSON Scenarios (`jmcmock`)
 `jmcmock` supports declarative multi-action and multi-player simulations loaded from JSON files (`--scenario <FILE>` or `-s <FILE>`).
@@ -156,6 +158,10 @@ JustMC and `jmcmock` define four distinct variable scopes with strictly defined 
   - `clear_log`: `{ "type": "clear_log" }` (flushes recorded log lines for clean step assertions).
 
 ### Mock Runtime World & Action Execution Model (`jmcmock`)
+> [!CAUTION]
+> **`jmcmock` реализован НЕ идеально — это лишь приблизительная модель рантайма JustMC!**
+> `jmcmock` существует только для базовой офлайн-проверки и смоук-тестов. Он часто может работать некорректно или расходиться с реальным сервером: в нём не реализованы многие функции плейсхолдеров (например, `%math()`, `%length()`, `%index()`, `%entry()`), нет полной симуляции Minecraft AI, инвентарей, пакетов или серверных таймингов платформы. **Любое поведение, связанное с плейсхолдерами, строками, передачей данных или серверными механиками, ОБЯЗАТЕЛЬНО должно проверяться на реальном сервере JustMC!**
+
 `jmcmock` implements execution semantics for core JustMC action groups without requiring a real Minecraft server:
 - **World State Storage**:
   - **`Player`**: tracks `health`, `max_health`, `absorption_health`, `game_mode`, `food`, `saturation`, `experience`, `fire_ticks`, `is_flying`, `allow_flying`, `is_sneaking`, `is_sprinting`, `is_gliding`, `position`, `spawn_point`.
@@ -191,4 +197,94 @@ JustMC and `jmcmock` define four distinct variable scopes with strictly defined 
   - *Action Collapsing*: Optimization passes like `CoordinateFoldingPass` collapse sequences of platform actions (`set_coordinate` $\rightarrow$ `set_all_coordinates`) to stay within the 50-action line limit. They operate on platform actions, not literal struct values; do not introduce synthetic value nodes that disrupt action merging.
   - *Dead Code Elimination*: Dead code elimination belongs in HIR before actions are lowered; duplicating DCE into MIR is redundant overhead.
 
+### Dynamic Placeholders, Handler Splitting & DCE Target Liveness
+- **Dynamic Argument Activation (`split_long_handlers`)**: Dynamic variable passing via `va_args` MUST be triggered whenever static analysis cannot guarantee frame variable coverage across a split:
+  - *Dynamic Writes*: If `defined_before` contains variables with placeholders (`name.contains('%')`), it may have populated any variable at runtime. If `remainder` references any line variable, dynamic arguments must be injected.
+  - *Dynamic Reads*: If `remainder` references variables with placeholders, it may dynamically read any variable defined earlier. If `defined_before` defined any line variables, dynamic arguments must be injected.
+  - *Condition*: `(def_has_dyn && !referenced_in_remainder.is_empty()) || (ref_has_dyn && !defined_before.is_empty())`. Requiring both simultaneously is a critical defect that silently drops variables.
+- **Recursive Line Placeholder Extraction**: References to line variables can appear inside `Value::Text`, `Value::Map` keys (`TextValue`), `Value::Variable` names (including global/local/save variables whose dynamic names reference line variables, e.g. `g\`%var_line(key)\``), `Value::Item`, and `Value::Block`. Extraction must recurse through nested placeholders (e.g. `%var_line(%var_line(k))`) so all referenced inner variables are accounted for.
+- **Aliased Temporary Replacement Across All Scopes**: When `var_aliases` tracks temporary variables redirected to other variables, `CodeGen::emit_text_content` must replace all four possible scope prefixes (`%var_line`, `%var_local`, `%var`, `%var_save`) after resolving alias chains, preventing unresolved temporary placeholders from leaking into Edition 2023 or non-line scoped strings.
+- **DCE Dynamic Target Liveness**: In `dce::collect_read_vars`, target expressions of `Hir::VarDecl([target, val])` and `Hir::Set([target, val])` must still be inspected for string literals containing `%var` placeholders. Variables referenced inside dynamic assignment target names (e.g. `` `prefix_%var_line(k)` = 1 ``) are variable reads; omitting them causes DCE to incorrectly eliminate definitions of variables used solely within target placeholders.
+- **Balanced Parenthesis Parsing in Placeholders**: Finding closing parentheses in `%var` or `%var_line` placeholders must track nested parenthesis depth rather than using naive `.find(')')`, ensuring nested placeholders (such as `%var_line(%var_line(k))` or `%math(...)`) are extracted without premature truncation.
+- **JustMC Placeholder Syntax Rules (`/help placeholders`)**:
+  - *Values, Symbols & Targets*: MUST have closing `%` (`%player%`, `%player_uuid%`, `%worlds%`, `%time%`, `%default%`, `%selected%`).
+  - *Functions & Variable Lookups*: Concluded with `)` and MUST **NOT** have a closing `%` (`%var(name)`, `%var_line(name)`, `%var_local(name)`, `%var_save(name)`, `%length(...)`, `%index(...)`, `%entry(...)`, `%math(...)`). Writing `"%var_line(x)%"` leaves a trailing literal `%` in the string (`"VAL%"`) because the platform consumes only `%var_line(x)`.
+  - *Nested Placeholders*: JustMC natively resolves nested call expressions (e.g. `%var_line(%var_line(test))` or `%var(%player%_key)`). Do not emit manual `$` substitutions or string `.replace()` hacks, which break under compiler interpolation.
+  - *Scope Boundaries Across Calls & Processes*: Synchronous `code::call_function` isolates `line` scope (`stream.line`), but shares `local` scope across the call tree; targets and `game`/`save` are preserved. Asynchronous `code::start_process` and `code::wait` isolate both `line` and `local` scopes (only `game` and `save` cross process boundaries).
+  - *Percent Collisions*: Standard escaping (`%%`) is not supported by JustMC. A percent sign next to text (e.g. `50% for %player%`) can cause placeholder parsing collisions on the server.
+- **Aliased Temporary Scope Preservation (`CodeGen::emit_scoped_var`)**:
+  - When `emit_scoped_var` encounters a variable wrapped in `Mir::Line`, `Mir::Local`, etc., it must NOT unconditionally overwrite the scope of aliased temporaries (`is_aliased`) or variables with known durable scopes (`VariableScope::Global`, `VariableScope::Save`).
+  - Otherwise, compiler inlining of operators (such as `__equals__` which declares `line var __inl_first`) coerces global operands into `line` scope (`{"variable": "%player%_...", "scope": "line"}`), crashing execution on JustMC (`variable '...' does not exist in the 'line' scope`).
 
+### Optimization Passes, Dynamic Variables & Scope Safety (`MIR`)
+- **Copy Coalescing String Literal Safety**: `CopyCoalescingPass` operates on variable reference nodes in MIR, but does NOT rewrite string literals (`Mir::Str`). Any compiler temporary (such as inlined function parameters `__inl_`) that is referenced inside any `Mir::Str` node (e.g. `%var_line(__inl_param)`) via `collect_str_referenced_vars` MUST NOT be forwarded, redirected, or marked dead; otherwise string literals will reference eliminated, dead variables at runtime.
+- **Dynamic Variable Placeholder Exclusion in MIR Passes**: Dynamic variable names containing `%` (e.g. `g\`%var(k)\``) are runtime-evaluated and MUST NOT be treated as static scalar variables:
+  - In `SetVariableFoldingPass`: variables with `%` in their name cannot be merged into `set_values`, and expressions referencing any variables in the current group cannot be reordered.
+  - In `CopyCoalescingPass`: variables whose names contain `%` must be excluded from `copies`, `aliases`, and `action_writes`.
+  - In `CoordinateFoldingPass`: variables whose names contain `%` must not be grouped into merged coordinate actions.
+- **Redundant Else Elimination Safety**: `RedundantElseEliminationPass` removes `else` branches that assign `0.0` to a variable outside loops, assuming the variable is 0 on entry. This assumption is ONLY valid for:
+  1. `edition >= 2026` line scope (in Edition 2023, default scope is `local` and variables may persist across executions).
+  2. Variables strictly in `Mir::Line` scope (NEVER `Mir::Game`, `Mir::Save`, or `Mir::Local`).
+  3. Compiler-generated temporaries (`name.starts_with("__mt")`). User variables (e.g. `var x = 5; if c { x = 1 } else { x = 0 }`) may have prior values; deleting `else { x = 0 }` causes incorrect retention of previous values!
+- **Edition-Aware Temporary Scoping**: Compiler temporaries generated during lowering must respect edition default scopes:
+  - `MirLowerer::fresh_temp`: Emits `Mir::Line` for `edition >= 2026`, and `Mir::Local` for `edition < 2026`.
+  - `OverloadExpander`: Emits `self.default_scope` (`Local` in Edition 2023, `Line` in Edition 2026) for inline function parameters, return variables, and argument atomization temporaries.
+  - `CodeGen::fresh_temp`: Uses `self.default_scope` instead of hardcoding `Line`.
+- **Trailing Nops in Redundant Return Elimination**: In `RedundantReturnEliminationPass`, blocks containing trailing `Mir::Nop` statements after `Mir::ReturnFunc` must be inspected using reverse search (`rposition(|&c| !matches!(..., Nop))`) so that redundant return instructions followed by non-semantic Nops are reliably eliminated.
+- **Dead Store Elimination (DSE) & Placeholder Deactivation (`ir::opt::mir::dse`)**:
+  - Eliminates dead overwrites to `Mir::Line` variables within a single block when the value expression is pure (`is_pure_mir`) and the variable is unconditionally overwritten before any intervening read, branch, or function call.
+  - If any node in the MIR function tree contains `%` (`has_any_placeholders`), DSE is completely deactivated to prevent removing variables that might be read dynamically at runtime.
+- **HIR Copy Propagation Target Invalidation (`get_target_var_name`)**:
+  - In `ir::opt::hir::copy_prop`, mutations to indexed slots (`Hir::Set([Hir::Index([target, slot]), val])`) must resolve and invalidate the root `target` variable via `get_target_var_name`. Otherwise, container mutations inside loop bodies (e.g. iterator progress in `while it.has_next()`) fail to register in `written_vars`, causing `CopyPropagationPass` to incorrectly treat the object as loop-invariant and causing infinite loops.
+- **JustMC Action Schema Parameter Conformity**:
+  - In `ir::mir::exprs`, `set_variable_get_list_value` requires parameter name `"number"` (representing the 1-based index). Emitting `"index"` violates the schema and fails runtime execution in JustMC and `jmcmock`.
+- **Unused Variable Semantic Warnings & Dynamic Placeholders (`W0003`)**:
+  - `ast::analyze` tracks local variable declarations and reads. If a declared local variable has zero reads and does not begin with `_`, warning `W0003: UnusedVariable` is emitted.
+  - If the enclosing function or callable contains string interpolations or `%` placeholders (`callable_has_dynamic`), `W0003` warnings are suppressed for that callable to avoid false positives on dynamically accessed variables.
+- **Overwritten Assignment Semantic Warning (`W0004: OverwrittenAssignment`)**:
+  - `ast::analyze` tracks sequential assignments to local variables in statement blocks via `analyze_block_statements`. If a variable is overwritten before being read, warning `W0004` is emitted.
+  - Automatically suppressed if `callable_has_dynamic` is active, or if the variable name begins with `_` or contains `%`, or if the code belongs to `std`.
+- **Loop Invariant Semantic Warning (`W0005: LoopInvariant`)**:
+  - `ast::analyze` inspects `while` and `for` loop bodies via `check_loop_invariants`. If an assignment computes a pure value whose operands are never modified within the loop body, warning `W0005` is emitted suggesting hoisting the invariant computation outside.
+  - Automatically suppressed if dynamic placeholders are present, or if the variable name begins with `_`, or if the code belongs to `std`.
+- **Loop-Invariant Code Motion (LICM) Pass (`ir::opt::hir::licm`)**:
+  - Automatically hoists pure assignments whose variables and expressions are not modified inside `Hir::While` loops to before the loop. Reduces runtime ticks in JustMC by computing invariants once instead of every iteration.
+  - Completely deactivated when dynamic `%` placeholders are detected in the loop.
+- **Common Subexpression Elimination (CSE) Pass (`ir::opt::hir::cse`)**:
+  - Scans statement blocks for duplicate pure computations (including `Hir::Index` slot access and arithmetic) and hoists them into temporary variables (`__cse_N`), eliminating redundant evaluations.
+- **Loop Unrolling Pass (`ir::opt::hir::loop_unroll`)**:
+  - Identifies simple `while i < end` loops with constant step 1 and trip count $1 \le N \le 4$. Replaces the loop with $N$ copies of the body, substituting the iteration variable with constant values and eliminating loop header overhead in JustMC.
+- **Tail Call Optimization (TCO) Pass (`ir::opt::hir::tco`)**:
+  - Identifies functions ending with a self-recursive tail call (`return f(...)` or `f(...)`). Rewrites the function body into a flat `while (true)` loop with parameter updates (`continue`), eliminating `code::call_function` frame allocations and preventing call stack overflow.
+- **Branch Folding & Empty Conditional Pruning (`ir::opt::mir::branch_folding`)**:
+  - Identifies conditional actions (`if_...` or `if`) whose `then` and `else` branches are both empty or contain only `Mir::Nop`. Prunes them completely and strips `Mir::Nop` instructions from blocks in MIR.
+- **Consecutive If Same Condition Warning (`W0006: ConsecutiveIfSameCondition`) & Branch Merging Pass (`ir::opt::mir::branch_merging`)**:
+  - `ast::analyze` warns (`W0006`) when two consecutive `if` statements check the identical condition without modifying the condition variables in the first branch.
+  - `BranchMergingPass` in MIR merges consecutive `if` statements with identical conditions into a single block, saving 2 physical JustMC actions (condition + closing bracket) per merged branch.
+- **Unused Parameter Semantic Warning (`W0007: UnusedParameter`) & Dead Argument Elimination Pass (`ir::opt::hir::dead_arg_elim`)**:
+  - `ast::analyze` warns (`W0007`) when a parameter in a non-exported callable is never referenced in its body, suggesting a `_` prefix if intentional.
+  - `DeadArgumentEliminationPass` removes unused arguments from internal, non-exported functions and updates all call sites across the HIR module.
+- **Dead Loop Semantic Warning (`W0008: DeadLoop`) & Dead Loop Elimination Pass (`ir::opt::hir::dead_loop`)**:
+  - `ast::analyze` warns (`W0008`) when a loop has an empty body without side effects.
+  - `DeadLoopEliminationPass` in HIR eliminates loops with known false conditions (`false`, `0.0`), empty bodies, or pure bodies whose assignments are never read outside the loop, replacing them with `Hir::Nop`.
+- **Loop Invariant Branch Semantic Warning (`W0009: LoopInvariantBranch`) & Loop Unswitch Pass (`ir::opt::hir::loop_unswitch`)**:
+  - `ast::analyze` warns (`W0009`) when a loop body contains a conditional statement whose condition is invariant across iterations.
+  - `LoopUnswitchPass` in HIR lifts loop-invariant conditionals outside the loop: `while cond { if inv { A } else { B } }` becomes `if inv { while cond { A } } else { while cond { B } }`, evaluating the condition once instead of per iteration.
+- **Code Sinking Pass (`ir::opt::hir::code_sinking`)**:
+  - Moves pure variable declarations and assignments into the specific branch of a following `if` statement where the variable is actually used, avoiding evaluation overhead when taking alternate branches.
+- **MIR Instruction Combination Module (`ir::opt::mir::instcombine`)**:
+  - Reorganizes MIR local peephole and combination optimizations into a dedicated `instcombine` module: `SetVariableFoldingPass`, `CoordinateFoldingPass`, `ActionPeepholePass`, and `MirConstantFoldingPass`.
+  - For backwards compatibility, legacy paths in `ir::opt::mir::{coordinate_folding, set_variable_folding}` re-export the implementations from `instcombine`.
+- **Action Peephole Pass (`ir::opt::mir::instcombine::peephole`)**:
+  - Specializes `variable::add(var, [var, K])` into `variable::increment(var, number = K)` and `variable::subtract(var, [var, K])` into `variable::decrement(var, number = K)` (when $K > 0$).
+  - Merges adjacent `player::message` actions to the same receiver/selector with compatible merging options into a single action with combined `messages` array (up to the 18-element JustMC limit), saving 1 physical line action.
+  - Merges adjacent `variable::append_list` and `variable::append_value` operations targeting the same variable, eliminating redundant container/array append actions.
+- **MIR Constant Folding Pass (`ir::opt::mir::instcombine::constant_folding`)**:
+  - Performs compile-time evaluation across all non-numeric and composite types in MIR:
+    - *Text & Strings*: merges adjacent string literals in `Mir::Concat`, evaluates `join_text`, `get_text_length`, `trim_text`, and `replace_text`.
+    - *Lists*: evaluates `get_list_value` by constant index, `get_list_length`, and `contains_value`.
+    - *Maps*: performs compile-time lookup for `get_map_value` by constant key and computes `get_map_size`.
+    - *Vectors & Locations*: extracts coordinates `get_vector_component` and `get_coordinate` from constant constructors `set_vector` / `set_all_coordinates`, and computes `get_vector_length`.
+- **Loop Fusion Pass (`ir::opt::hir::loop_fusion`)**:
+  - Merges adjacent `while` loops with identical induction variables and pure conditions into a single loop body when loop bounds are unmodified and data dependencies permit.
+  - Merges adjacent `repeat::on_range` actions over identical ranges and `repeat::for_each_in_list` over identical lists into a single loop, saving 2 physical JustMC actions (container block + bracket) per fused loop.

@@ -4,57 +4,38 @@ use crate::ir::VarName;
 use crate::ir::arena::NodeArena;
 use crate::ir::hir::Hir;
 use crate::ir::opt::FunctionPass;
-use crate::ir::opt::hir::common::{get_var_name, get_var_name_in, string_lit};
+use crate::ir::opt::hir::common::{
+    collect_action_written_vars, get_target_var_name, get_var_name, get_var_name_in, string_lit,
+};
 use egg::{Id, Language as _, RecExpr, Symbol};
 use jmcdata::generated::get_action_def;
 use std::collections::{HashMap, HashSet};
 
-/// The arguments of an action that name a variable instead of reading a value.
-///
-/// The schema tells them apart by `arg_type`: a `variable` argument is the
-/// target of the action (`variable::exists`, `variable::append_list`), every
-/// other one is a value. An action the schema does not know gives an empty set:
-/// nothing can be said about its arguments, and treating a name as a value is
-/// what the pass has always done.
-fn target_args(expr: &RecExpr<Hir>, ids: &[Id]) -> HashSet<Symbol> {
-    let (Some(object), Some(name)) = (string_lit(expr, ids[0]), string_lit(expr, ids[1])) else {
-        return HashSet::new();
-    };
-    let Some(def) = get_action_def(object.as_str(), name.as_str()) else {
-        return HashSet::new();
-    };
-    def.args
-        .iter()
-        .filter(|arg| arg.arg_type == "variable")
-        .map(|arg| Symbol::from(arg.id))
-        .collect()
-}
-
-/// The variables an action writes through its `variable`-typed arguments.
-///
-/// [`target_args`] names the arguments; this resolves each of them to the
-/// variable it points at, which is what the copy map is keyed by. An action that
-/// writes a variable makes every copy of it stale — including the one the
-/// action's own result is read from right afterwards.
-fn written_targets(expr: &RecExpr<Hir>, ids: &[Id], targets: &HashSet<Symbol>) -> HashSet<Symbol> {
-    let Some(&args) = ids.get(3) else {
-        return HashSet::new();
-    };
-    let mut names = HashSet::new();
-    let mut stack = vec![args];
-    while let Some(id) = stack.pop() {
-        match &expr[id] {
-            Hir::Named([name, value])
-                if string_lit(expr, *name).is_some_and(|name| targets.contains(&name)) =>
-            {
-                if let Some(variable) = get_var_name(expr, *value) {
-                    names.insert(variable);
+fn collect_func_ref_params(expr: &RecExpr<Hir>) -> HashMap<Symbol, Vec<bool>> {
+    let mut map = HashMap::new();
+    for node in expr.as_ref() {
+        if let Hir::FuncDecl([name_id, params_id, _]) = node
+            && let Some(name) = string_lit(expr, *name_id)
+        {
+            let mut refs = Vec::new();
+            if let Hir::List(ids) = &expr[*params_id] {
+                for &p_id in ids {
+                    let p_name = match &expr[p_id] {
+                        Hir::List(pair) if !pair.is_empty() => string_lit(expr, pair[0]),
+                        _ => string_lit(expr, p_id),
+                    };
+                    if let Some(p_name) = p_name {
+                        let (_, is_ref) = crate::utils::split_param_ref(p_name.as_str());
+                        refs.push(is_ref);
+                    } else {
+                        refs.push(false);
+                    }
                 }
             }
-            _ => stack.extend(expr[id].children().iter().copied()),
+            map.insert(name, refs);
         }
     }
-    names
+    map
 }
 
 /// The variables a body writes, directly or through the control flow inside it.
@@ -62,24 +43,44 @@ fn written_targets(expr: &RecExpr<Hir>, ids: &[Id], targets: &HashSet<Symbol>) -
 /// Used where a value known before a construct stops being known inside it: a
 /// loop body may run any number of times, so everything it assigns is unknown at
 /// the loop's head.
-fn written_vars(expr: &RecExpr<Hir>, id: Id) -> HashSet<Symbol> {
+fn written_vars(
+    expr: &RecExpr<Hir>,
+    id: Id,
+    func_params: &HashMap<Symbol, Vec<bool>>,
+) -> HashSet<Symbol> {
     let mut names = HashSet::new();
     let mut stack = vec![id];
     while let Some(id) = stack.pop() {
         match &expr[id] {
             Hir::Set([target, value]) | Hir::VarDecl([target, value]) => {
-                if let Some(name) = get_var_name(expr, *target) {
+                if let Some(name) = get_target_var_name(expr, *target) {
                     names.insert(name);
                 }
                 stack.push(*value);
             }
             Hir::Inc(inner) | Hir::Dec(inner) => {
-                if let Some(name) = get_var_name(expr, *inner) {
+                if let Some(name) = get_target_var_name(expr, *inner) {
                     names.insert(name);
                 }
             }
             Hir::Action(ids) => {
-                names.extend(target_args(expr, ids));
+                collect_action_written_vars(expr, ids, &mut names);
+                stack.extend(expr[id].children().iter().copied());
+            }
+            Hir::FuncCall([target, args]) => {
+                if let Some(func_name) = string_lit(expr, *target)
+                    && let Some(param_refs) = func_params.get(&func_name)
+                    && let Hir::List(arg_ids) = &expr[*args]
+                {
+                    for (idx, &arg_id) in arg_ids.iter().enumerate() {
+                        if param_refs.get(idx).copied().unwrap_or(false)
+                            && let Some(v) = get_target_var_name(expr, arg_id)
+                                .or_else(|| get_var_name(expr, arg_id))
+                        {
+                            names.insert(v);
+                        }
+                    }
+                }
                 stack.extend(expr[id].children().iter().copied());
             }
             _ => stack.extend(expr[id].children().iter().copied()),
@@ -91,6 +92,7 @@ fn written_vars(expr: &RecExpr<Hir>, id: Id) -> HashSet<Symbol> {
 struct CopyPropContext<'a> {
     expr: &'a RecExpr<Hir>,
     new_nodes: NodeArena<Hir>,
+    func_params: HashMap<Symbol, Vec<bool>>,
 }
 
 enum ScopeKind {
@@ -111,10 +113,11 @@ enum CopyResolution {
 }
 
 impl<'a> CopyPropContext<'a> {
-    fn new(expr: &'a RecExpr<Hir>) -> Self {
+    fn new(expr: &'a RecExpr<Hir>, func_params: HashMap<Symbol, Vec<bool>>) -> Self {
         Self {
             expr,
             new_nodes: NodeArena::with_capacity(expr.len()),
+            func_params,
         }
     }
 
@@ -166,6 +169,11 @@ impl<'a> CopyPropContext<'a> {
     }
 
     fn visit_target(&mut self, id: Id, copy_map: &mut HashMap<Symbol, Id>) -> Id {
+        if let Hir::Named([name, val]) = self.expr[id] {
+            let new_name = self.clone_var_node(name);
+            let new_val = self.visit_target(val, copy_map);
+            return self.add(Hir::Named([new_name, new_val]));
+        }
         if get_var_name(self.expr, id).is_some() {
             self.clone_var_node(id)
         } else {
@@ -243,6 +251,7 @@ impl<'a> CopyPropContext<'a> {
             Hir::ClassDecl(ids) => self.visit_class(ids, copy_map),
 
             Hir::Action(ids) => self.visit_action(&ids, copy_map),
+            Hir::FuncCall(ids) => self.visit_func_call(ids, copy_map),
 
             Hir::Break | Hir::Continue | Hir::Nop => self.add(node),
 
@@ -299,13 +308,14 @@ impl<'a> CopyPropContext<'a> {
 
     fn visit_set(&mut self, [target, value]: [Id; 2], copies: &mut HashMap<Symbol, Id>) -> Id {
         let value = self.visit(value, copies);
-        let target_name = get_var_name(self.expr, target);
-        if let Some(name) = target_name {
+        let target_var = get_target_var_name(self.expr, target);
+        let direct_name = get_var_name(self.expr, target);
+        if let Some(name) = target_var {
             log::trace!("  cp: invalidate copies for {name}");
             self.invalidate_copies(copies, name);
         }
         let target = self.visit_target(target, copies);
-        if let Some(name) = target_name
+        if let Some(name) = direct_name
             && self.is_simple_value_new(value)
         {
             log::trace!("  cp: set copy/const {name} -> {value:?}");
@@ -331,7 +341,7 @@ impl<'a> CopyPropContext<'a> {
     }
 
     fn visit_update(&mut self, inner: Id, copies: &mut HashMap<Symbol, Id>, increment: bool) -> Id {
-        if let Some(name) = get_var_name(self.expr, inner) {
+        if let Some(name) = get_target_var_name(self.expr, inner) {
             self.invalidate_copies(copies, name);
         }
         let inner = self.visit_target(inner, copies);
@@ -382,7 +392,7 @@ impl<'a> CopyPropContext<'a> {
         // run — so nothing the body writes keeps the value it had before the
         // loop. Folding `a < 10` with the `a = 1` known at the loop's head would
         // freeze the loop into one that never ends.
-        for name in written_vars(self.expr, body) {
+        for name in written_vars(self.expr, body, &self.func_params) {
             copies.remove(&name);
         }
         let condition = self.visit(condition, copies);
@@ -394,6 +404,44 @@ impl<'a> CopyPropContext<'a> {
             .collect::<Vec<_>>();
         copies.extend(restored);
         self.add(Hir::While([condition, body]))
+    }
+
+    fn visit_func_call(&mut self, [target, args]: [Id; 2], copies: &mut HashMap<Symbol, Id>) -> Id {
+        let func_name = string_lit(self.expr, target);
+        let param_refs = func_name.and_then(|n| self.func_params.get(&n)).cloned();
+
+        let new_target = self.visit(target, copies);
+
+        let mut ref_written = Vec::new();
+        let new_args = if let Hir::List(arg_ids) = &self.expr[args] {
+            let mut new_arg_ids = Vec::with_capacity(arg_ids.len());
+            for (idx, &arg_id) in arg_ids.iter().enumerate() {
+                let is_ref = param_refs
+                    .as_ref()
+                    .and_then(|r| r.get(idx))
+                    .copied()
+                    .unwrap_or(false);
+                if is_ref {
+                    if let Some(var_name) = get_target_var_name(self.expr, arg_id)
+                        .or_else(|| get_var_name(self.expr, arg_id))
+                    {
+                        ref_written.push(var_name);
+                    }
+                    new_arg_ids.push(self.visit_target(arg_id, copies));
+                } else {
+                    new_arg_ids.push(self.visit(arg_id, copies));
+                }
+            }
+            self.add(Hir::List(new_arg_ids.into_boxed_slice()))
+        } else {
+            self.visit(args, copies)
+        };
+
+        for name in ref_written {
+            self.invalidate_copies(copies, name);
+        }
+
+        self.add(Hir::FuncCall([new_target, new_args]))
     }
 
     fn visit_function(
@@ -435,8 +483,11 @@ impl<'a> CopyPropContext<'a> {
     }
 
     fn visit_action(&mut self, ids: &[Id], copies: &mut HashMap<Symbol, Id>) -> Id {
-        let targets = target_args(self.expr, ids);
-        let written_targets = written_targets(self.expr, ids, &targets);
+        let def = string_lit(self.expr, ids[0])
+            .zip(string_lit(self.expr, ids[1]))
+            .and_then(|(obj, name)| get_action_def(obj.as_str(), name.as_str()));
+        let is_condition_action = def.is_some_and(|d| d.id.starts_with("if_") || d.boolean);
+
         // A container's body may write anything, and its condition is read after
         // the body — on every iteration, for `repeat::while`. What the body
         // assigns is therefore unknown at the condition and after the container.
@@ -444,15 +495,23 @@ impl<'a> CopyPropContext<'a> {
             .get(4)
             .copied()
             .filter(|&id| !matches!(self.expr[id], Hir::Nop));
-        let written = body.map_or_else(HashSet::new, |body| written_vars(self.expr, body));
+        let written = body.map_or_else(HashSet::new, |body| {
+            written_vars(self.expr, body, &self.func_params)
+        });
         let condition = self.condition_index(ids);
+        let mut written_targets = HashSet::new();
         let mut new_ids = Vec::with_capacity(ids.len());
         for (index, &id) in ids.iter().enumerate() {
             match index {
                 // The argument list. An argument the schema declares as a
                 // `variable` names the variable to act on rather than reads it,
                 // so it has to stay a reference.
-                3 => new_ids.push(self.visit_action_args(id, copies, &targets)),
+                3 => {
+                    let (new_args, targets) =
+                        self.visit_action_args(id, copies, def, is_condition_action);
+                    written_targets = targets;
+                    new_ids.push(new_args);
+                }
                 // The body and the lambda are their own copy scopes, and the
                 // condition is read after the body.
                 4 | 5 => {
@@ -489,35 +548,55 @@ impl<'a> CopyPropContext<'a> {
     }
 
     /// Visits an action's argument list, keeping the arguments that name a
-    /// variable as variable references.
-    ///
-    /// Folded into their value, they would stop naming anything:
-    /// `variable::exists(a)` would become `variable::exists(1)` and ask about a
-    /// variable called `1`. Reading arguments are free to be folded — there the
-    /// value is what matters.
+    /// variable as variable references, and collecting variables written by the action.
     fn visit_action_args(
         &mut self,
         id: Id,
         copies: &mut HashMap<Symbol, Id>,
-        targets: &HashSet<Symbol>,
-    ) -> Id {
-        let node = self.expr[id].clone();
-        if let Hir::Named([name, value]) = node {
-            let is_target = string_lit(self.expr, name).is_some_and(|n| targets.contains(&n));
-            let name = self.visit(name, copies);
-            let value = if is_target {
-                self.visit_target(value, copies)
-            } else {
-                self.visit(value, copies)
+        def: Option<&jmcdata::generated::ActionDef>,
+        is_condition_action: bool,
+    ) -> (Id, HashSet<Symbol>) {
+        let Hir::List(arg_ids) = &self.expr[id] else {
+            return (self.visit(id, copies), HashSet::new());
+        };
+        let mut used_params = HashSet::new();
+        let mut positional_idx = 0;
+        let mut written_targets = HashSet::new();
+        let mut new_arg_ids = Vec::with_capacity(arg_ids.len());
+
+        for &arg_id in arg_ids {
+            let (name, val) = match &self.expr[arg_id] {
+                Hir::Named([n, v]) => (string_lit(self.expr, *n).map(|s| s.to_string()), *v),
+                _ => (None, arg_id),
             };
-            return self.add(Hir::Named([name, value]));
+            let target_arg = crate::utils::resolve_action_arg_def(
+                name.as_deref(),
+                def,
+                &mut used_params,
+                &mut positional_idx,
+            );
+            let is_target = target_arg.is_some_and(|a| a.arg_type == "variable");
+            let new_val = if is_target {
+                if !is_condition_action && let Some(var) = get_target_var_name(self.expr, val) {
+                    written_targets.insert(var);
+                }
+                self.visit_target(val, copies)
+            } else {
+                self.visit(val, copies)
+            };
+            let new_arg = match &self.expr[arg_id] {
+                Hir::Named([n, _]) => {
+                    let new_n = self.visit(*n, copies);
+                    self.add(Hir::Named([new_n, new_val]))
+                }
+                _ => new_val,
+            };
+            new_arg_ids.push(new_arg);
         }
-        let mut children = node.children().to_vec();
-        for child in &mut children {
-            *child = self.visit_action_args(*child, copies, targets);
-        }
-        let mut visited = children.into_iter();
-        self.add(node.map_children(|_| visited.next().unwrap()))
+        (
+            self.add(Hir::List(new_arg_ids.into_boxed_slice())),
+            written_targets,
+        )
     }
 
     fn visit_children(&mut self, node: Hir, copies: &mut HashMap<Symbol, Id>) -> Id {
@@ -536,10 +615,19 @@ impl<'a> CopyPropContext<'a> {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct CopyPropagationPass;
+pub struct CopyPropagationPass {
+    /// Which parameters of each function are `ref`, taken from the whole module
+    /// in [`FunctionPass::prepare`]. A body on its own no longer contains the
+    /// declarations of the functions it calls.
+    func_ref_params: HashMap<Symbol, Vec<bool>>,
+}
 
 impl FunctionPass<Hir> for CopyPropagationPass {
     const OPT_LEVEL: u8 = 1;
+
+    fn prepare(&mut self, module: &RecExpr<Hir>) {
+        self.func_ref_params = collect_func_ref_params(module);
+    }
 
     fn run(&self, expr: &RecExpr<Hir>) -> RecExpr<Hir> {
         if expr.is_empty() {
@@ -549,7 +637,7 @@ impl FunctionPass<Hir> for CopyPropagationPass {
         log::trace!("=== Copy Propagation Start ===");
         log::trace!("Input expr ({} nodes): {expr:?}", expr.len());
 
-        let mut ctx = CopyPropContext::new(expr);
+        let mut ctx = CopyPropContext::new(expr, self.func_ref_params.clone());
         let root = expr.root();
         let mut copy_map: HashMap<Symbol, Id> = HashMap::new();
         let _new_root = ctx.visit(root, &mut copy_map);

@@ -215,13 +215,13 @@ pub(super) fn replace<'a>(
             rt.optional_enum_arg(stream, args, "ignore_case")?,
             Some("TRUE")
         );
-        Ok(Some(value::text(replace_text(
-            &text,
-            &needle,
-            &replacement,
-            first_only,
-            ignore_case,
-        ))))
+        let replaced = replace_text(&text, &needle, &replacement, first_only, ignore_case);
+        let final_text = if replaced.contains('%') {
+            crate::text::substitute_placeholders(rt, stream, &replaced)?
+        } else {
+            replaced
+        };
+        Ok(Some(value::text(final_text)))
     })
 }
 

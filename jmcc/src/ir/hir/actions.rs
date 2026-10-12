@@ -45,7 +45,8 @@ impl HirBuilder<'_> {
         let (obj_str, def, is_method) = self.resolve_action_call_target(target_expr, method_sym);
 
         let call_args = self.call_args_without_duplicate_receiver(c, def, is_method);
-        let (args_list_id, mut ab) = self.conv_args(call_args, def, is_method, is_statement)?;
+        let (args_list_id, mut ab, write_backs) =
+            self.conv_args(call_args, def, is_method, is_statement)?;
         b.append(&mut ab);
 
         if let Expr::Ident(name, _) = target_expr {
@@ -76,7 +77,7 @@ impl HirBuilder<'_> {
                         }
                         named_args.push(arg.clone());
                     }
-                    let (args_list_id, b) = self.conv_args(&named_args, None, false, false)?;
+                    let (args_list_id, b, _) = self.conv_args(&named_args, None, false, false)?;
                     let node = self.add(Hir::ProcCall([target, args_list_id]));
                     return Ok(self.wrap_lets(node, b));
                 }
@@ -111,6 +112,13 @@ impl HirBuilder<'_> {
         let new_args = self.receiver_args(args_list_id, target, def, is_method, is_statement);
 
         let act = self.action(obj_str, method_sym, new_args);
+        let act = if write_backs.is_empty() {
+            act
+        } else {
+            let mut stmts = vec![act];
+            stmts.extend(write_backs);
+            self.add(Hir::Block(stmts.into_boxed_slice()))
+        };
         Ok(self.wrap_lets(act, b))
     }
 
@@ -232,7 +240,7 @@ impl HirBuilder<'_> {
                         )
                     })
                     .collect::<Vec<_>>();
-                let (args_list, b) = self.conv_args(&named_args, None, false, false)?;
+                let (args_list, b, _) = self.conv_args(&named_args, None, false, false)?;
                 let target_id = self.str_lit(self.sym(p.name));
                 let node = self.add(Hir::ProcCall([target_id, args_list]));
                 return Ok(self.wrap_lets(node, b));
@@ -244,7 +252,7 @@ impl HirBuilder<'_> {
         let def = schema::action_def(object_str, name_str);
         let (cond_id, args_to_process) = self.convert_action_condition(a, def)?;
 
-        let (args, b) = self.conv_args(&args_to_process, def, false, is_statement)?;
+        let (args, b, write_backs) = self.conv_args(&args_to_process, def, false, is_statement)?;
 
         let block_id = match &a.operations {
             Some(ops) => {
@@ -292,6 +300,13 @@ impl HirBuilder<'_> {
             name_sym,
             [sel_id, args, block_id, lambda_id, cond_id],
         );
+        let action_id = if write_backs.is_empty() {
+            action_id
+        } else {
+            let mut stmts = vec![action_id];
+            stmts.extend(write_backs);
+            self.add(Hir::Block(stmts.into_boxed_slice()))
+        };
         let final_id = if a.invert == Some(true) {
             self.add(Hir::Not(action_id))
         } else {
@@ -349,7 +364,7 @@ impl HirBuilder<'_> {
 
         let (target, mut bindings) = self.atomize(call.target)?;
         let call_args = self.call_args_without_duplicate_receiver(call, Some(definition), true);
-        let (args, args_bindings) = self.conv_args(call_args, Some(definition), true, false)?;
+        let (args, args_bindings, _) = self.conv_args(call_args, Some(definition), true, false)?;
         bindings.extend(args_bindings);
         let mut all_args = Vec::new();
         if let Some(origin) = definition.origin {

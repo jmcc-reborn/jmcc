@@ -67,6 +67,7 @@ pub fn same_variable(expr: &RecExpr<Mir>, first: Id, second: Id) -> bool {
 pub fn is_temp_var(name: &str, extra_prefixes: &[&str]) -> bool {
     name.starts_with("__ht")
         || name.starts_with("__t")
+        || name.starts_with("__ct")
         || name.starts_with("__inl_")
         || extra_prefixes.iter().any(|p| name.starts_with(p))
 }
@@ -87,6 +88,7 @@ pub fn is_plain_temp(name: &str, extra_prefixes: &[&str]) -> bool {
     let rest = strip_inline_prefixes(name);
     rest.starts_with("__ht")
         || rest.starts_with("__t")
+        || rest.starts_with("__ct")
         || extra_prefixes.iter().any(|p| rest.starts_with(p))
 }
 
@@ -134,11 +136,81 @@ pub fn extract_var_value_args(expr: &RecExpr<Mir>, id: Id) -> Option<(Id, Id)> {
     None
 }
 
+/// Extracts all variable names referenced inside a string literal with `%var...` placeholders.
+pub fn extract_vars_from_str(s: &str, vars: &mut HashSet<String>) {
+    let mut remainder = s;
+    while let Some(pos) = remainder.find("%var") {
+        remainder = &remainder[pos + 4..];
+        let after_prefix = if let Some(stripped) = remainder.strip_prefix("_line(") {
+            stripped
+        } else if let Some(stripped) = remainder.strip_prefix("_local(") {
+            stripped
+        } else if let Some(stripped) = remainder.strip_prefix("_save(") {
+            stripped
+        } else if let Some(stripped) = remainder.strip_prefix('(') {
+            stripped
+        } else {
+            continue;
+        };
+        let mut depth = 1;
+        let mut end = 0;
+        for (i, b) in after_prefix.bytes().enumerate() {
+            if b == b'(' {
+                depth += 1;
+            } else if b == b')' {
+                depth -= 1;
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        if depth == 0 {
+            let var_name = &after_prefix[..end];
+            vars.insert(var_name.to_string());
+            if var_name.contains("%var") {
+                extract_vars_from_str(var_name, vars);
+            }
+            remainder = &after_prefix[end + 1..];
+        }
+    }
+}
+
+/// Collects all variable names referenced inside any `Mir::Str` node in the expression.
+#[must_use]
+pub fn collect_str_referenced_vars(expr: &RecExpr<Mir>) -> HashSet<String> {
+    let mut vars = HashSet::new();
+    for node in expr.as_ref() {
+        if let Mir::Str(s) = node {
+            extract_vars_from_str(s.0.as_str(), &mut vars);
+        }
+    }
+    vars
+}
+
+/// Checks if a string contains any variable placeholder matching `vars`.
+#[must_use]
+pub fn string_contains_any_var(s: &str, vars: &HashSet<String>) -> bool {
+    let mut s_vars = HashSet::new();
+    extract_vars_from_str(s, &mut s_vars);
+    s_vars.iter().any(|v| vars.contains(v))
+}
+
 /// Checks if a subtree references any variable in `vars`.
 #[must_use]
 pub fn references_any_variable(expr: &RecExpr<Mir>, root: Id, vars: &HashSet<String>) -> bool {
-    !walk_subtree(expr, root, |_, id| {
-        get_variable_name(expr, id).is_none_or(|name| !vars.contains(name.as_str()))
+    !walk_subtree(expr, root, |node, id| {
+        if let Some(name) = get_variable_name(expr, id)
+            && vars.contains(name.as_str())
+        {
+            return false;
+        }
+        if let Mir::Str(s) = node
+            && string_contains_any_var(s.0.as_str(), vars)
+        {
+            return false;
+        }
+        true
     })
 }
 
@@ -169,5 +241,15 @@ pub fn clone_var_node(
             new_nodes.add(Mir::Save(new_inner))
         }
         _ => id_map[usize::from(id)],
+    }
+}
+
+/// Returns true if the action is a `code::else` block action.
+#[must_use]
+pub fn is_else_action(expr: &RecExpr<Mir>, id: Id) -> bool {
+    if let Mir::Action(ids) = &expr[id] {
+        ids.len() >= 2 && node_str_eq(&expr[ids[0]], "code") && node_str_eq(&expr[ids[1]], "else")
+    } else {
+        false
     }
 }

@@ -17,7 +17,6 @@ impl Parser<'_> {
     pub(super) fn parse_if_stmt(&mut self) -> Result<Statement> {
         self.bump();
         let start_span = self.span();
-        let is_not = self.eat(Token::Not);
         let condition = self.parse_expr(0)?;
 
         let then_body = self.parse_block_or_stmt()?;
@@ -52,7 +51,6 @@ impl Parser<'_> {
             elif_branches,
             elif_spans,
             else_body,
-            is_not,
             span: start_span.start..end_span,
         }))
     }
@@ -70,7 +68,6 @@ impl Parser<'_> {
     pub(super) fn parse_while_stmt(&mut self, label: Option<StrId>) -> Result<Statement> {
         let start_span = self.span();
         self.bump();
-        let is_not = self.eat(Token::Not);
         let condition = self.parse_expr(0)?;
         let body = self.parse_block_or_stmt()?;
         let end_span = self.last_span().end;
@@ -78,7 +75,6 @@ impl Parser<'_> {
             label,
             condition,
             body,
-            is_not,
             span: start_span.start..end_span,
         }))
     }
@@ -336,7 +332,39 @@ impl Parser<'_> {
 
     #[instrument(skip(self), level = "trace")]
     pub(super) fn parse_var_decl_or_expr_stmt(&mut self) -> Result<Statement> {
+        self.parse_var_decl_or_expr_stmt_with_cached(false)
+    }
+
+    pub(super) fn parse_var_decl_or_expr_stmt_with_cached(
+        &mut self,
+        mut is_cached: bool,
+    ) -> Result<Statement> {
         let start_span = self.span();
+
+        if !is_cached && self.is_token(Token::Cached) {
+            let is_cached_modifier = matches!(
+                self.peek_token(),
+                Some(
+                    Token::Var
+                        | Token::Const
+                        | Token::Local
+                        | Token::Line
+                        | Token::Game
+                        | Token::Save
+                        | Token::Inline
+                        | Token::Class
+                        | Token::Ident(_)
+                        | Token::DQuote
+                        | Token::SQuote
+                        | Token::BQuote
+                        | Token::Mod
+                )
+            );
+            if is_cached_modifier {
+                self.bump();
+                is_cached = true;
+            }
+        }
 
         let mut initial_scope = None;
         let is_scope = self.at_var_scope();
@@ -347,6 +375,7 @@ impl Parser<'_> {
                 Some(
                     Token::Var
                         | Token::Const
+                        | Token::Cached
                         | Token::Ident(_)
                         | Token::DQuote
                         | Token::SQuote
@@ -358,21 +387,47 @@ impl Parser<'_> {
             initial_scope = Some(self.parse_var_scope()?);
         }
 
-        if self.eat(Token::Var) || (self.edition >= 2026 && self.eat(Token::Const)) {
-            return self.parse_var_decl_rest(initial_scope, start_span);
+        if !is_cached && self.is_token(Token::Cached) {
+            let is_cached_modifier = matches!(
+                self.peek_token(),
+                Some(
+                    Token::Var
+                        | Token::Const
+                        | Token::Local
+                        | Token::Line
+                        | Token::Game
+                        | Token::Save
+                        | Token::Inline
+                        | Token::Class
+                        | Token::Ident(_)
+                        | Token::DQuote
+                        | Token::SQuote
+                        | Token::BQuote
+                        | Token::Mod
+                )
+            );
+            if is_cached_modifier {
+                self.bump();
+                is_cached = true;
+            }
         }
 
-        if initial_scope.is_some() {
-            return self.parse_var_decl_rest(initial_scope, start_span);
+        if self.eat(Token::Var) || (self.edition >= 2026 && self.eat(Token::Const)) {
+            return self.parse_var_decl_rest(initial_scope, is_cached, start_span);
+        }
+
+        if initial_scope.is_some() || is_cached {
+            return self.parse_var_decl_rest(initial_scope, is_cached, start_span);
         }
 
         self.parse_expr_or_assign_stmt(start_span)
     }
 
-    #[instrument(skip(self, initial_scope, start_span), level = "trace")]
+    #[instrument(skip(self, initial_scope, is_cached, start_span), level = "trace")]
     fn parse_var_decl_rest(
         &mut self,
         initial_scope: Option<VarScope>,
+        is_cached: bool,
         start_span: Span,
     ) -> Result<Statement> {
         let mut scopes = Vec::new();
@@ -424,6 +479,7 @@ impl Parser<'_> {
             tys,
             value,
             is_exported: false,
+            is_cached,
             span: start_span.start..end_span,
         }))
     }
@@ -462,6 +518,7 @@ impl Parser<'_> {
                 tys: vec![Some(ty)],
                 value,
                 is_exported: false,
+                is_cached: false,
                 span: start_span.start..end_span,
             }));
         }

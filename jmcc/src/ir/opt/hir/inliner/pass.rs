@@ -255,8 +255,6 @@ impl<'a> Inliner<'a> {
 
                 if let Some(prev) = prev_binding {
                     var_map.insert(old_name, prev);
-                } else {
-                    var_map.remove(old_name.as_str());
                 }
 
                 self.emit(Hir::Let([fresh_var_id, new_val_id, new_body_id]))

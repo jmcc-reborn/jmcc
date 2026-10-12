@@ -92,6 +92,10 @@ impl<'a> Formatter<'a> {
             Statement::Match(m) => m.span.clone(),
             Statement::TryCatch(tc) => tc.span.clone(),
             Statement::Throw(th) => th.span.clone(),
+            Statement::Cfg(cfg, inner) => {
+                let inner_span = self.stmt_span(inner);
+                cfg.span.start..inner_span.end
+            }
         }
     }
 

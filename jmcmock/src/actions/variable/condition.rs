@@ -67,6 +67,9 @@ pub fn evaluate<'a>(
     match condition {
         ActionId::IfVariableDummy => Ok(false),
         ActionId::IfVariableEquals | ActionId::IfVariableNotEquals => {
+            if has_cross_scope_variables(args) {
+                return Ok(condition == ActionId::IfVariableNotEquals);
+            }
             let left = rt.arg(stream, args, "value")?;
             let equal = rt
                 .values_arg(stream, args, "compare")?
@@ -156,11 +159,33 @@ fn compare_numbers<'a>(
     args: Args<'a>,
     apply: impl Fn(f64, f64) -> bool,
 ) -> Result<bool> {
+    if has_cross_scope_variables(args) {
+        return Ok(false);
+    }
     let left = rt.number_arg(stream, args, "value")?;
     Ok(rt
         .numbers_arg(stream, args, "compare")?
         .iter()
         .any(|candidate| apply(left, *candidate)))
+}
+
+fn has_cross_scope_variables(args: Args<'_>) -> bool {
+    let left_scope = match args.raw("value") {
+        Some(Value::Variable { scope, .. }) => Some(*scope),
+        _ => None,
+    };
+    let right_scope = match args.raw("compare") {
+        Some(Value::Variable { scope, .. }) => Some(*scope),
+        Some(Value::Array { values }) => values.iter().flatten().find_map(|v| match v {
+            Value::Variable { scope, .. } => Some(*scope),
+            _ => None,
+        }),
+        _ => None,
+    };
+    match (left_scope, right_scope) {
+        (Some(s1), Some(s2)) => s1 != s2,
+        _ => false,
+    }
 }
 
 /// `if_variable_number_in_range`: попадание числа в диапазон с выбором границ.

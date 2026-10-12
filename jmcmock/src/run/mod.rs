@@ -28,7 +28,7 @@ use crate::error::{Candidates, Result, RuntimeError};
 use crate::interp::Flow;
 use crate::scope::{Shared, line_var_names, scoped_var_names};
 use crate::value::Rt;
-use crate::world::{Selection, Target, World, default_world};
+use crate::world::{Position, Selection, Target, World, default_world};
 
 mod calls;
 mod events;
@@ -437,6 +437,10 @@ pub struct Stream<'a> {
     pub(crate) event_item: Rt<'a>,
     pub(crate) event_slot: f64,
     pub(crate) inventory_title: String,
+    pub(crate) from_location: Option<Position>,
+    pub(crate) to_location: Option<Position>,
+    pub(crate) damage_cause: String,
+    pub(crate) block_location: Option<Position>,
 }
 
 /// Creates an empty frame for a new stream.
@@ -457,6 +461,10 @@ pub fn spawn_stream<'a>(targets: Vec<Target>, origin: String) -> Stream<'a> {
         event_item: None,
         event_slot: 0.0,
         inventory_title: String::new(),
+        from_location: None,
+        to_location: None,
+        damage_cause: String::new(),
+        block_location: None,
     }
 }
 
@@ -501,6 +509,14 @@ pub struct EventData<'a> {
     pub slot: Option<f64>,
     /// The open menu's title (`open_inventory_title`).
     pub inventory_title: Option<String>,
+    /// Initial location (`event_from_location`).
+    pub from_location: Option<Position>,
+    /// New location (`event_new_location`).
+    pub to_location: Option<Position>,
+    /// Damage cause (`event_damage_cause`).
+    pub damage_cause: Option<String>,
+    /// Block location (`event_block_location`).
+    pub block_location: Option<Position>,
 }
 
 /// The mock runtime: a world, settings and global variables around one

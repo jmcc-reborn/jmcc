@@ -53,10 +53,14 @@ edition = 2026
 
 [profile.dev]
 opt_level = 1
+debug_time = true
+minify = false
 
 [profile.release]
 opt_level = 3
 emit = ["json"]
+debug_time = false
+minify = true
 ```
 
 ### 2.2. Writing Your First Code (`src/main.jc`)
@@ -534,6 +538,43 @@ event<player_join> {
 }
 ```
 
+### 8.4. Cached Classes and Fields (Write-Through Optimization)
+By default, reading an object property `p.x` emits a `get_list_value` action to extract the element from the backing list. In loops or hot event handlers with multiple property accesses, this produces redundant server operations and large JSON payloads.
+
+Marking a class or specific fields with `cached` enables **write-through caching**:
+
+```jc
+// All fields in Point are cached
+cached class Point {
+    var x: number;
+    var y: number;
+
+    function __init__(self: Point, x: number, y: number) -> Point {
+        self.x = x;
+        self.y = y;
+        return self;
+    }
+}
+
+// Or cache specific fields only:
+class State {
+    cached id: number;
+    hp: number; // normal field, read directly via get_list_value
+}
+
+event<world_start> {
+    var p = Point(10, 20);
+
+    // First read loads p.x from list into local variable %line%__cache_p_x
+    // Subsequent reads reuse the cached variable directly without get_list_value!
+    var dist = p.x * p.x + p.y * p.y;
+
+    // Writes update BOTH the underlying list AND the local cache variable (write-through)
+    // guaranteeing thread-safe visibility for concurrent events without data races!
+    p.x = 42;
+}
+```
+
 ---
 
 ## 9. Programming for JustMC (Minecraft)
@@ -650,6 +691,81 @@ Run tests with a single command:
 jmcc test
 ```
 The compiler executes all tests in the `jmcmock` virtual environment and prints test results.
+
+### 10.3. Conditional Compilation & Features (`@cfg`, `[features]`)
+
+JustCode supports compile-time conditional compilation via the `@cfg(feature = "...")` decorator and feature management in `jmcc.toml`.
+
+#### Configuring Features in `jmcc.toml`
+
+Declare optional dependencies and features in `jmcc.toml`:
+
+```toml
+[package]
+name = "my_game"
+version = "0.1.0"
+edition = 2026
+
+[dependencies]
+base_lib = { path = "../base_lib" }
+economy_lib = { path = "../economy_lib", optional = true }
+
+[features]
+default = ["economy"]
+economy = ["dep:economy_lib"]
+admin_tools = []
+```
+
+- `optional = true`: The dependency is not fetched or compiled unless explicitly enabled by a feature via `dep:<name>`. Unlike Cargo, `optional = true` does **not** implicitly create a public feature.
+- `[features].default`: List of features enabled by default.
+- Forwarding dependency features: `feature_name = ["dep_name/sub_feature"]`.
+
+#### Using `@cfg` in JustCode
+
+Attach `@cfg(...)` to any declaration or statement:
+
+```jc
+@cfg(feature = "economy")
+import "economy_lib";
+
+@cfg(feature = "admin_tools")
+function ban_player(target: player) {
+    // Compiled only when admin_tools is active
+}
+
+function give_reward(p: player) {
+    @cfg(feature = "economy")
+    economy_lib::deposit(p, 100);
+
+    player::message<p>("Reward granted!");
+}
+```
+
+Russian syntax is fully supported:
+```jc
+@cfg(фича = "экономика")
+функция начислить(игрок: игрок) { ... }
+
+@cfg(все(фича = "а", фича = "б"))
+@cfg(любой(фича = "а", фича = "б"))
+@cfg(не(фича = "в"))
+```
+
+#### Compiling with Features
+
+```bash
+# Compile with default features
+jmcc compile
+
+# Activate specific features
+jmcc compile -F admin_tools
+
+# Disable default features and activate custom ones
+jmcc compile --no-default-features -F economy
+
+# Activate all features
+jmcc compile --all-features
+```
 
 ---
 

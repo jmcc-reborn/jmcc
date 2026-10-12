@@ -901,3 +901,178 @@ event<player_join> {
 
     drop(std::fs::remove_dir_all(temp_dir));
 }
+
+#[test]
+fn test_runtime_not_precedence_and_event_return() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "jmcc_rt_not_prec_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let fixture_file = temp_dir.join("test.jc");
+
+    let source = r#"
+event<player_join> {
+    var a = false;
+    var b = false;
+    if not a and b {
+        player::message("FAIL_NOT_PRECEDENCE");
+    }
+    if not a and not b {
+        player::message("PASS_NOT_PRECEDENCE");
+    }
+    return;
+    player::message("FAIL_EVENT_RETURN");
+}
+"#;
+    std::fs::write(&fixture_file, source).expect("write fixture");
+
+    let module = compile_file(&fixture_file, &test_options(2026, 2)).expect("compile");
+    let program = Program::from_module(module).expect("build program");
+    let mut runtime = Runtime::new(&program).expect("build runtime");
+    runtime.fire_event("player_join").expect("fire player_join");
+
+    let entries = runtime.world().log().entries();
+    assert!(
+        entries.iter().any(|e| e.contains("PASS_NOT_PRECEDENCE")),
+        "expected PASS_NOT_PRECEDENCE in logs: {entries:?}"
+    );
+    assert!(
+        !entries.iter().any(|e| e.contains("FAIL_NOT_PRECEDENCE")),
+        "FAIL_NOT_PRECEDENCE must NOT be executed: {entries:?}"
+    );
+    assert!(
+        !entries.iter().any(|e| e.contains("FAIL_EVENT_RETURN")),
+        "FAIL_EVENT_RETURN must NOT be executed after return;: {entries:?}"
+    );
+
+    drop(std::fs::remove_dir_all(temp_dir));
+}
+
+#[test]
+fn test_runtime_placeholder_early_dereferencing_in_replace() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "jmcmock_test_deref_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let fixture_file = temp_dir.join("test.jc");
+
+    let source = r##"
+event<player_join> {
+    line var secret = "RESOLVED_SECRET";
+    var s1 = "#var_line(secret)".replace("#", "%");
+    player::message("${s1}");
+}
+"##;
+    std::fs::write(&fixture_file, source).expect("write fixture");
+
+    let module = compile_file(&fixture_file, &test_options(2026, 2)).expect("compile");
+    let program = Program::from_module(module).expect("build program");
+    let mut runtime = Runtime::new(&program).expect("build runtime");
+    runtime.fire_event("player_join").expect("fire player_join");
+
+    let entries = runtime.world().log().entries();
+    assert!(
+        entries.iter().any(|e| e.contains("RESOLVED_SECRET")),
+        "expected placeholder to be resolved to RESOLVED_SECRET: {entries:?}"
+    );
+
+    drop(std::fs::remove_dir_all(temp_dir));
+}
+
+#[test]
+fn test_runtime_cross_scope_equality_promotion() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "jmcmock_test_cmp_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let fixture_file = temp_dir.join("test.jc");
+
+    let source = r#"
+game var g_msg: text;
+
+event<player_join> {
+    g_msg = "MATCH_PAYLOAD";
+    if g_msg == "MATCH_PAYLOAD" {
+        player::message("PASS_CMP_GAME_LIT");
+    }
+    if "MATCH_PAYLOAD" == g_msg {
+        player::message("PASS_CMP_LIT_GAME");
+    }
+}
+"#;
+    std::fs::write(&fixture_file, source).expect("write fixture");
+
+    let module = compile_file(&fixture_file, &test_options(2026, 2)).expect("compile");
+    let program = Program::from_module(module).expect("build program");
+    let mut runtime = Runtime::new(&program).expect("build runtime");
+    runtime.fire_event("player_join").expect("fire player_join");
+
+    let entries = runtime.world().log().entries();
+    assert!(
+        entries.iter().any(|e| e.contains("PASS_CMP_GAME_LIT")),
+        "expected PASS_CMP_GAME_LIT in log: {entries:?}"
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("PASS_CMP_LIT_GAME")),
+        "expected PASS_CMP_LIT_GAME in log: {entries:?}"
+    );
+
+    drop(std::fs::remove_dir_all(temp_dir));
+}
+
+#[test]
+fn test_runtime_multi_level_ref_soft_fix() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "jmcmock_test_ref_soft_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let fixture_file = temp_dir.join("test.jc");
+
+    let source = r#"
+function step_a(ref sa: number) {
+    sa = sa + 5;
+}
+
+function step_b(ref sb: number) {
+    step_a(sb);
+}
+
+game var %player%_dyn_val: number;
+
+event<player_join> {
+    %player%_dyn_val = 10;
+    step_b(%player%_dyn_val);
+    player::message("VAL=${%player%_dyn_val}");
+}
+"#;
+    std::fs::write(&fixture_file, source).expect("write fixture");
+
+    let module = compile_file(&fixture_file, &test_options(2026, 2)).expect("compile");
+    let program = Program::from_module(module).expect("build program");
+    let mut runtime = Runtime::new(&program).expect("build runtime");
+    runtime.fire_event("player_join").expect("fire player_join");
+
+    let entries = runtime.world().log().entries();
+    assert!(
+        entries.iter().any(|e| e.contains("VAL=15")),
+        "expected multi-level ref to update dynamic variable to 15: {entries:?}"
+    );
+
+    drop(std::fs::remove_dir_all(temp_dir));
+}

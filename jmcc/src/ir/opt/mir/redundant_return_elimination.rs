@@ -20,21 +20,22 @@ pub fn eliminate_redundant_return(expr: &RecExpr<Mir>) -> RecExpr<Mir> {
     match &new_nodes[root_idx] {
         Mir::Block(children) => {
             if !children.is_empty() {
-                let last_child_idx = usize::from(children[children.len() - 1]);
-
-                if matches!(&new_nodes[last_child_idx], Mir::ReturnFunc(_))
-                    && let Mir::Block(old_children) = new_nodes[root_idx].clone()
-                {
-                    let new_children = old_children[..old_children.len() - 1].to_vec();
-
-                    if new_children.is_empty() {
-                        new_nodes[root_idx] = Mir::Nop;
-                    } else {
-                        new_nodes[root_idx] = Mir::Block(new_children.into_boxed_slice());
+                let non_nop_pos = children
+                    .iter()
+                    .rposition(|&c| !matches!(new_nodes[usize::from(c)], Mir::Nop));
+                if let Some(pos) = non_nop_pos {
+                    let child_idx = usize::from(children[pos]);
+                    if matches!(&new_nodes[child_idx], Mir::ReturnFunc(_)) {
+                        let mut new_children = children[..pos].to_vec();
+                        new_children.retain(|&c| !matches!(new_nodes[usize::from(c)], Mir::Nop));
+                        if new_children.is_empty() {
+                            new_nodes[root_idx] = Mir::Nop;
+                        } else {
+                            new_nodes[root_idx] = Mir::Block(new_children.into_boxed_slice());
+                        }
+                        log::trace!("[RedundantReturn] Removed trailing return_func from block.");
+                        return RecExpr::from(new_nodes);
                     }
-
-                    log::trace!("[RedundantReturn] Removed trailing return_func from block.");
-                    return RecExpr::from(new_nodes);
                 }
             }
         }

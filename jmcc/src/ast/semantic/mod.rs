@@ -276,6 +276,7 @@ pub enum SemanticErrorKind {
         actual: String,
     },
     ReturnFromProcess,
+    ReturnFromEvent,
     MissingReturnValue,
     InvalidCondition {
         actual: String,
@@ -460,6 +461,22 @@ pub enum SemanticErrorKind {
     EventNotCancellable {
         event: String,
     },
+    UnusedVariable {
+        name: String,
+    },
+    OverwrittenAssignment {
+        name: String,
+    },
+    LoopInvariant {
+        name: String,
+    },
+    ConsecutiveIfSameCondition,
+    UnusedParameter {
+        name: String,
+        func: String,
+    },
+    DeadLoop,
+    LoopInvariantBranch,
 }
 
 impl SemanticErrorKind {
@@ -467,7 +484,15 @@ impl SemanticErrorKind {
     pub const fn is_warning(&self) -> bool {
         matches!(
             self,
-            Self::DeprecatedElif | Self::EventNotCancellable { .. }
+            Self::DeprecatedElif
+                | Self::EventNotCancellable { .. }
+                | Self::UnusedVariable { .. }
+                | Self::OverwrittenAssignment { .. }
+                | Self::LoopInvariant { .. }
+                | Self::ConsecutiveIfSameCondition
+                | Self::UnusedParameter { .. }
+                | Self::DeadLoop
+                | Self::LoopInvariantBranch
         )
     }
 }
@@ -514,11 +539,12 @@ impl SemanticErrorKind {
                 Self::CompoundAssignTarget { op, target } => {
                     format!("Составное присваивание '{op}' требует числовой цели, получено '{target}'")
                 }
-                Self::ReturnOutsideCallable => "'return' вне функции или процесса".to_owned(),
+                Self::ReturnOutsideCallable => "'return' вне функции, процесса или события".to_owned(),
                 Self::TypeMismatchReturn { expected, actual } => {
                     format!("Невозможно вернуть значение типа '{actual}' из функции с типом возврата '{expected}'")
                 }
                 Self::ReturnFromProcess => "Невозможно вернуть значение из процесса".to_owned(),
+                Self::ReturnFromEvent => "Невозможно вернуть значение из события".to_owned(),
                 Self::MissingReturnValue => "Функция с типом возврата должна возвращать значение".to_owned(),
                 Self::InvalidCondition { actual } => {
                     format!("Условие должно быть логическим выражением, получено '{actual}'")
@@ -661,6 +687,27 @@ impl SemanticErrorKind {
                 Self::EventNotCancellable { event } => {
                     format!("Событие '{event}' не поддерживает отмену")
                 }
+                Self::UnusedVariable { name } => {
+                    format!("переменная '{name}' ни разу не используется")
+                }
+                Self::OverwrittenAssignment { name } => {
+                    format!("значение переменной '{name}' перезаписывается до того, как было прочитано")
+                }
+                Self::LoopInvariant { name } => {
+                    format!("выражение, присвоенное переменной '{name}', является инвариантом цикла")
+                }
+                Self::ConsecutiveIfSameCondition => {
+                    "два последовательных оператора 'if' проверяют одно и то же условие".to_owned()
+                }
+                Self::UnusedParameter { name, func } => {
+                    format!("параметр '{name}' функции '{func}' ни разу не используется")
+                }
+                Self::DeadLoop => {
+                    "цикл не производит побочных эффектов и его результаты не используются".to_owned()
+                }
+                Self::LoopInvariantBranch => {
+                    "условие 'if' внутри цикла является инвариантом цикла".to_owned()
+                }
             },
             Lang::En => match self {
                 Self::InternalCompilerError { details } => {
@@ -688,11 +735,12 @@ impl SemanticErrorKind {
                 Self::CompoundAssignTarget { op, target } => {
                     format!("Compound assignment '{op}' requires numeric target, got '{target}'")
                 }
-                Self::ReturnOutsideCallable => "'return' outside of a function or process".to_owned(),
+                Self::ReturnOutsideCallable => "'return' outside of a function, process, or event".to_owned(),
                 Self::TypeMismatchReturn { expected, actual } => {
                     format!("Cannot return value of type '{actual}' from function with return type '{expected}'")
                 }
                 Self::ReturnFromProcess => "Cannot return a value from a process".to_owned(),
+                Self::ReturnFromEvent => "Cannot return a value from an event".to_owned(),
                 Self::MissingReturnValue => "Function with return type must return a value".to_owned(),
                 Self::InvalidCondition { actual } => format!("Condition must be truthy, got '{actual}'"),
                 Self::InvalidElifCondition { actual } => format!("elif condition must be truthy, got '{actual}'"),
@@ -829,6 +877,27 @@ impl SemanticErrorKind {
                 Self::EventNotCancellable { event } => {
                     format!("Event '{event}' is not cancellable")
                 }
+                Self::UnusedVariable { name } => {
+                    format!("variable '{name}' is never used")
+                }
+                Self::OverwrittenAssignment { name } => {
+                    format!("value assigned to variable '{name}' is overwritten before being read")
+                }
+                Self::LoopInvariant { name } => {
+                    format!("expression assigned to variable '{name}' is loop-invariant")
+                }
+                Self::ConsecutiveIfSameCondition => {
+                    "consecutive 'if' statements check the same condition".to_owned()
+                }
+                Self::UnusedParameter { name, func } => {
+                    format!("parameter '{name}' of function '{func}' is never used")
+                }
+                Self::DeadLoop => {
+                    "loop has no side effects and its results are never used".to_owned()
+                }
+                Self::LoopInvariantBranch => {
+                    "'if' condition inside loop is a loop invariant".to_owned()
+                }
             },
         }
     }
@@ -892,6 +961,15 @@ impl SemanticError {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct VarDeclRecord {
+    pub name: String,
+    pub span: Span,
+    pub scope: VarScope,
+    pub used: bool,
+    pub callable_depth: usize,
+}
+
 pub struct Analyzer<'a> {
     ast: &'a Ast,
     source: &'a str,
@@ -920,6 +998,9 @@ pub struct Analyzer<'a> {
     open_param_vars: HashSet<usize>,
     /// `std` root, resolved once in [`Analyzer::new`]: `std_lib_root` hits the filesystem.
     std_root: PathBuf,
+    pub(super) var_declarations: Vec<VarDeclRecord>,
+    pub(super) callable_depth: usize,
+    pub(super) callable_has_dynamic: Vec<bool>,
 }
 
 impl<'a> Analyzer<'a> {
@@ -954,6 +1035,20 @@ impl<'a> Analyzer<'a> {
             current_event: None,
             open_param_vars: HashSet::new(),
             std_root: crate::ast::import::std_lib_root(),
+            var_declarations: Vec::new(),
+            callable_depth: 0,
+            callable_has_dynamic: Vec::new(),
+        }
+    }
+
+    pub(super) fn mark_var_used(&mut self, name: &str) {
+        if let Some(record) = self
+            .var_declarations
+            .iter_mut()
+            .rev()
+            .find(|v| v.name == name && v.callable_depth <= self.callable_depth)
+        {
+            record.used = true;
         }
     }
 

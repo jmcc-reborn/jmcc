@@ -57,7 +57,7 @@ impl OverloadExpander<'_> {
             .transpose()?;
         if decl.names.len() == 1 {
             let name = self.sym_str_from_text(&decl.names[0])?;
-            let scope = decl_scope(&decl.scopes, 0, VarScope::Line);
+            let scope = decl_scope(&decl.scopes, 0, self.default_scope);
             let variable = self.scoped_var(name, scope)?;
             let value = value.unwrap_or_else(|| self.add(Hir::Nop));
             return Ok(self.add(Hir::VarDecl([variable, value])));
@@ -77,17 +77,11 @@ impl OverloadExpander<'_> {
 
             let temp_name = self.fresh();
             let temp_raw = self.add(Hir::Var(VarName(temp_name)));
-            let temp = self.add(Hir::Line(temp_raw));
+            let temp = self.wrap_scope(temp_raw, self.default_scope)?;
             statements.push(self.add(Hir::VarDecl([temp, value])));
             for (index, name) in decl.names.iter().enumerate() {
                 let index_id = self.add(Hir::Num((index as f64).into()));
-                let args = self.add(Hir::List(vec![temp, index_id].into_boxed_slice()));
-                let object = self.add(Hir::Str(StrLit(Symbol::from("variable"))));
-                let name_id = self.add(Hir::Str(StrLit(Symbol::from("get_list_value"))));
-                let nop = self.add(Hir::Nop);
-                let action = self.add(Hir::Action(
-                    vec![object, name_id, nop, args, nop, nop, nop].into_boxed_slice(),
-                ));
+                let action = self.add(Hir::Index([temp, index_id]));
                 let variable = self.declared_var(decl, index, name)?;
                 statements.push(self.add(Hir::VarDecl([variable, action])));
             }
@@ -157,10 +151,10 @@ impl OverloadExpander<'_> {
         let try_body = self.conv_ast_block(&tc.try_body)?;
         let catch_var = if let Some(var) = &tc.catch_var {
             let name = self.sym_str_from_text(var)?;
-            self.scoped_var(name, VarScope::Line)?
+            self.scoped_var(name, self.default_scope)?
         } else {
             let name = self.fresh();
-            self.scoped_var(name, VarScope::Line)?
+            self.scoped_var(name, self.default_scope)?
         };
         let kind = match &tc.catch_type {
             Some(ty) => self.ast.strings.resolve(ty).to_ascii_uppercase(),

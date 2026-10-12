@@ -39,6 +39,9 @@ enum Command {
         /// Optional path to the `JustCode` standard library directory (`std`).
         #[arg(long)]
         std_path: Option<PathBuf>,
+        /// Optional path to a file where LSP logs should be written.
+        #[arg(long)]
+        log_file: Option<PathBuf>,
     },
 }
 
@@ -80,8 +83,8 @@ fn run() -> Result<(), CliError> {
             writeln!(io::stderr(), "wrote {}", dest.display())?;
             Ok(())
         }
-        Command::Lsp { std_path } => {
-            lsp::run_with_std_path(std_path).map_err(|e| CliError::Lsp(e.to_string()))
+        Command::Lsp { std_path, log_file } => {
+            lsp::run_with_options(std_path, log_file).map_err(|e| CliError::Lsp(e.to_string()))
         }
     }
 }

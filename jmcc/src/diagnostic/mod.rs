@@ -392,6 +392,10 @@ pub fn strip_suggestion(s: &str) -> String {
 }
 
 /// Converts a [`SemanticErrorKind`] and its AST span into a [`Diagnostic`].
+#[expect(
+    clippy::too_many_lines,
+    reason = "Diagnostic conversion maps all semantic error variants"
+)]
 #[must_use]
 pub fn semantic_to_diagnostic(
     kind: &SemanticErrorKind,
@@ -475,6 +479,73 @@ pub fn semantic_to_diagnostic(
                 ),
                 Lang::En => {
                     format!("remove cancel_event() call as event '{event}' is not cancellable")
+                }
+            };
+            diag = diag.with_help(help_text);
+        }
+        SemanticErrorKind::UnusedVariable { name } => {
+            let help_text = match lang {
+                Lang::Ru => format!(
+                    "если эта переменная намеренно не используется, добавьте префикс подчеркивания: '_{name}'"
+                ),
+                Lang::En => format!(
+                    "if this variable is intentionally unused, prefix it with an underscore: '_{name}'"
+                ),
+            };
+            diag = diag.with_help(help_text);
+        }
+        SemanticErrorKind::OverwrittenAssignment { .. } => {
+            let help_text = match lang {
+                Lang::Ru => "удалите лишнее присваивание или используйте значение переменной",
+                Lang::En => "remove redundant assignment or use the variable value",
+            };
+            diag = diag.with_help(help_text);
+        }
+        SemanticErrorKind::LoopInvariant { .. } => {
+            let help_text = match lang {
+                Lang::Ru => {
+                    "вынесите вычисление переменной за пределы цикла для повышения производительности"
+                }
+                Lang::En => {
+                    "hoist the variable computation outside the loop for better performance"
+                }
+            };
+            diag = diag.with_help(help_text);
+        }
+        SemanticErrorKind::ConsecutiveIfSameCondition => {
+            let help_text = match lang {
+                Lang::Ru => {
+                    "объедините тела этих блоков 'if' для экономии действий и улучшения читаемости"
+                }
+                Lang::En => {
+                    "merge the bodies of these 'if' blocks to save actions and improve readability"
+                }
+            };
+            diag = diag.with_help(help_text);
+        }
+        SemanticErrorKind::UnusedParameter { .. } => {
+            let help_text = match lang {
+                Lang::Ru => {
+                    "добавьте префикс '_' к имени параметра, если он намеренно не используется"
+                }
+                Lang::En => "prefix the parameter name with '_' if it is intentionally unused",
+            };
+            diag = diag.with_help(help_text);
+        }
+        SemanticErrorKind::DeadLoop => {
+            let help_text = match lang {
+                Lang::Ru => "удалите мертвый цикл для экономии процессорных тиков сервера",
+                Lang::En => "remove the dead loop to save server ticks",
+            };
+            diag = diag.with_help(help_text);
+        }
+        SemanticErrorKind::LoopInvariantBranch => {
+            let help_text = match lang {
+                Lang::Ru => {
+                    "вынесите 'if' за пределы цикла (loop unswitching) для исключения проверки на каждой итерации"
+                }
+                Lang::En => {
+                    "hoist the 'if' outside the loop (loop unswitching) to avoid evaluating it on each iteration"
                 }
             };
             diag = diag.with_help(help_text);
@@ -579,8 +650,8 @@ fn error_code_and_label(kind: &SemanticErrorKind, lang: Lang) -> (&'static str, 
         SemanticErrorKind::ReturnOutsideCallable => (
             "E0012",
             Some(match lang {
-                Lang::Ru => "'return' вне функции или процесса".to_owned(),
-                Lang::En => "'return' outside function or process".to_owned(),
+                Lang::Ru => "'return' вне функции, процесса или события".to_owned(),
+                Lang::En => "'return' outside function, process, or event".to_owned(),
             }),
         ),
         SemanticErrorKind::MissingReturnValue => (
@@ -992,6 +1063,13 @@ fn error_code_and_label(kind: &SemanticErrorKind, lang: Lang) -> (&'static str, 
                 Lang::En => "process cannot return a value".to_owned(),
             }),
         ),
+        SemanticErrorKind::ReturnFromEvent => (
+            "E0061",
+            Some(match lang {
+                Lang::Ru => "событие не может возвращать значение".to_owned(),
+                Lang::En => "event cannot return a value".to_owned(),
+            }),
+        ),
         SemanticErrorKind::DeprecatedElif => (
             "W0001",
             Some(match lang {
@@ -1004,6 +1082,66 @@ fn error_code_and_label(kind: &SemanticErrorKind, lang: Lang) -> (&'static str, 
             Some(match lang {
                 Lang::Ru => format!("событие '{event}' не поддерживает отмену"),
                 Lang::En => format!("event '{event}' is not cancellable"),
+            }),
+        ),
+        SemanticErrorKind::UnusedVariable { name } => (
+            "W0003",
+            Some(match lang {
+                Lang::Ru => format!("переменная '{name}' объявлена, но не используется"),
+                Lang::En => format!("variable '{name}' is declared but never used"),
+            }),
+        ),
+        SemanticErrorKind::OverwrittenAssignment { name } => (
+            "W0004",
+            Some(match lang {
+                Lang::Ru => format!(
+                    "значение переменной '{name}' перезаписывается до того, как было прочитано"
+                ),
+                Lang::En => {
+                    format!("value assigned to variable '{name}' is overwritten before being read")
+                }
+            }),
+        ),
+        SemanticErrorKind::LoopInvariant { name } => (
+            "W0005",
+            Some(match lang {
+                Lang::Ru => format!(
+                    "выражение, присвоенное переменной '{name}', является инвариантом цикла и вычисляется на каждой итерации"
+                ),
+                Lang::En => format!(
+                    "expression assigned to variable '{name}' is loop-invariant and re-evaluated on every iteration"
+                ),
+            }),
+        ),
+        SemanticErrorKind::ConsecutiveIfSameCondition => (
+            "W0006",
+            Some(match lang {
+                Lang::Ru => {
+                    "два последовательных оператора 'if' проверяют одно и то же условие".to_owned()
+                }
+                Lang::En => "consecutive 'if' statements check the same condition".to_owned(),
+            }),
+        ),
+        SemanticErrorKind::UnusedParameter { name, func } => (
+            "W0007",
+            Some(match lang {
+                Lang::Ru => format!("параметр '{name}' функции '{func}' ни разу не используется"),
+                Lang::En => format!("parameter '{name}' of function '{func}' is never used"),
+            }),
+        ),
+        SemanticErrorKind::DeadLoop => (
+            "W0008",
+            Some(match lang {
+                Lang::Ru => "цикл не производит побочных эффектов и его результаты не используются"
+                    .to_owned(),
+                Lang::En => "loop has no side effects and its results are never used".to_owned(),
+            }),
+        ),
+        SemanticErrorKind::LoopInvariantBranch => (
+            "W0009",
+            Some(match lang {
+                Lang::Ru => "условие 'if' внутри цикла является инвариантом цикла".to_owned(),
+                Lang::En => "'if' condition inside loop is a loop invariant".to_owned(),
             }),
         ),
     }

@@ -3,6 +3,8 @@
 
 use super::*;
 
+pub(super) type ConvArgsResult = (Id, Vec<(Id, Id)>, Vec<Id>);
+
 impl HirBuilder<'_> {
     /// Method arguments with a repeated receiver dropped: `map.set_map_value(map, key, value)`
     /// occurs in exported projects, and the extra arg would shift the `origin` slot.
@@ -24,6 +26,10 @@ impl HirBuilder<'_> {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "argument conversion handles positional, named, lvalue write-backs and enums in one loop"
+    )]
     #[instrument(skip(self, args, def), level = "trace")]
     pub(super) fn conv_args(
         &mut self,
@@ -31,9 +37,10 @@ impl HirBuilder<'_> {
         def: Option<&jmcdata::generated::ActionDef>,
         is_method: bool,
         is_statement: bool,
-    ) -> Result<(Id, Vec<(Id, Id)>), IrError> {
+    ) -> Result<ConvArgsResult, IrError> {
         let mut bindings = Vec::new();
         let mut ids = Vec::new();
+        let mut write_backs = Vec::new();
         let will_extract = self.should_extract_assign(args, def, is_method);
         let mut used_params = Self::initial_used_params(def, is_method, will_extract, is_statement);
 
@@ -44,6 +51,24 @@ impl HirBuilder<'_> {
             let mut val = Default::default();
             let mut bindings_to_extend = Vec::new();
             let mut did_extract = false;
+
+            let target_arg = if let Some(def) = def {
+                let arg_name_str = arg.name.map(|n| self.sym(n).to_string());
+                Some(
+                    crate::utils::resolve_action_arg_def(
+                        arg_name_str.as_deref(),
+                        Some(def),
+                        &mut used_params,
+                        &mut positional_idx,
+                    )
+                    .ok_or_else(|| IrError::TooManyArguments {
+                        object: def.object.to_owned(),
+                        name: def.name.to_owned(),
+                    })?,
+                )
+            } else {
+                None
+            };
 
             if will_extract && extracted_assign_var.is_none() {
                 let arg_name_str = arg.name.map(|n| self.sym(n).to_string());
@@ -67,46 +92,78 @@ impl HirBuilder<'_> {
             }
 
             if !did_extract {
-                let (v, b) = self.atomize(arg.value)?;
-                bindings_to_extend.extend(b);
-                val = v;
+                if let Some(target_arg) = target_arg
+                    && target_arg.arg_type == "variable"
+                {
+                    match &self.ast.exprs[arg.value] {
+                        Expr::Property(p) => {
+                            let temp_sym = self.fresh();
+                            let temp_var_raw = self.add(Hir::Var(VarName(temp_sym)));
+                            let temp_var = self.wrap_scope(temp_var_raw, self.default_scope);
+                            let current_val = self.conv_expr(arg.value)?;
+                            bindings_to_extend.push((temp_var, current_val));
+                            val = temp_var;
+                            if !self.try_property_assign(p, temp_var, &mut write_backs)? {
+                                let tgt = self.conv_expr(arg.value)?;
+                                write_backs.push(self.add(Hir::Set([tgt, temp_var])));
+                            }
+                        }
+                        Expr::Subscript(s) => {
+                            let temp_sym = self.fresh();
+                            let temp_var_raw = self.add(Hir::Var(VarName(temp_sym)));
+                            let temp_var = self.wrap_scope(temp_var_raw, self.default_scope);
+                            let current_val = self.conv_expr(arg.value)?;
+                            bindings_to_extend.push((temp_var, current_val));
+                            val = temp_var;
+                            if !self.try_subscript_assign(s, temp_var, &mut write_backs)? {
+                                let tgt = self.conv_expr(arg.value)?;
+                                write_backs.push(self.add(Hir::Set([tgt, temp_var])));
+                            }
+                        }
+                        _ => {
+                            let (v, b) = self.atomize(arg.value)?;
+                            bindings_to_extend.extend(b);
+                            if self.is_hir_var(v) {
+                                val = v;
+                            } else {
+                                let temp_sym = self.fresh();
+                                let temp_var_raw = self.add(Hir::Var(VarName(temp_sym)));
+                                let temp_var = self.wrap_scope(temp_var_raw, self.default_scope);
+                                bindings_to_extend.push((temp_var, v));
+                                val = temp_var;
+                            }
+                        }
+                    }
+                } else {
+                    let (v, b) = self.atomize(arg.value)?;
+                    bindings_to_extend.extend(b);
+                    val = v;
+                }
             }
             bindings.extend(bindings_to_extend);
 
-            if let Some(def) = def {
-                let arg_name_str = arg.name.map(|n| self.sym(n).to_string());
-                let target_arg = crate::utils::resolve_action_arg_def(
-                    arg_name_str.as_deref(),
-                    Some(def),
-                    &mut used_params,
-                    &mut positional_idx,
-                )
-                .ok_or_else(|| IrError::TooManyArguments {
-                    object: def.object.to_owned(),
-                    name: def.name.to_owned(),
-                })?;
-
-                if target_arg.arg_type == "enum" {
-                    match *self.get(val) {
-                        Hir::Num(n) => {
-                            if let Some(values) = target_arg.values {
-                                let idx = n.0 as usize;
-                                if idx < values.len() {
-                                    let s = self.str_lit(values[idx]);
-                                    val = self.add(Hir::Enum(s));
-                                } else {
-                                    return Err(IrError::EnumIndexOutOfBounds {
-                                        index: idx,
-                                        max: values.len(),
-                                    });
-                                }
+            if let Some(target_arg) = target_arg
+                && target_arg.arg_type == "enum"
+            {
+                match *self.get(val) {
+                    Hir::Num(n) => {
+                        if let Some(values) = target_arg.values {
+                            let idx = n.0 as usize;
+                            if idx < values.len() {
+                                let s = self.str_lit(values[idx]);
+                                val = self.add(Hir::Enum(s));
+                            } else {
+                                return Err(IrError::EnumIndexOutOfBounds {
+                                    index: idx,
+                                    max: values.len(),
+                                });
                             }
                         }
-                        Hir::Text([_, c]) => {
-                            val = self.add(Hir::Enum(c));
-                        }
-                        _ => {}
                     }
+                    Hir::Text([_, c]) => {
+                        val = self.add(Hir::Enum(c));
+                    }
+                    _ => {}
                 }
             }
 
@@ -129,7 +186,7 @@ impl HirBuilder<'_> {
         }
 
         let list = self.add(Hir::List(ids.into_boxed_slice()));
-        Ok((list, bindings))
+        Ok((list, bindings, write_backs))
     }
 
     fn initial_used_params(
@@ -232,7 +289,112 @@ impl HirBuilder<'_> {
                 && matches!(&self.ast.exprs[arg.value], Expr::List(list) if !list.values.is_empty())
         })
     }
+}
 
+fn extract_var_binding(hir: &[Hir], id: Id) -> Option<(Symbol, VarScope)> {
+    match &hir[usize::from(id)] {
+        Hir::Var(VarName(s)) => Some((*s, VarScope::Line)),
+        Hir::Line(inner) => {
+            if let Hir::Var(VarName(s)) = &hir[usize::from(*inner)] {
+                Some((*s, VarScope::Line))
+            } else {
+                None
+            }
+        }
+        Hir::Local(inner) => {
+            if let Hir::Var(VarName(s)) = &hir[usize::from(*inner)] {
+                Some((*s, VarScope::Local))
+            } else {
+                None
+            }
+        }
+        Hir::Game(inner) => {
+            if let Hir::Var(VarName(s)) = &hir[usize::from(*inner)] {
+                Some((*s, VarScope::Game))
+            } else {
+                None
+            }
+        }
+        Hir::Save(inner) => {
+            if let Hir::Var(VarName(s)) = &hir[usize::from(*inner)] {
+                Some((*s, VarScope::Save))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn body_mutates_sym(ast: &Ast, stmts: &[Statement], sym: StrId) -> bool {
+    fn expr_has_sym(ast: &Ast, expr: ExprId, sym: StrId) -> bool {
+        match &ast.exprs[expr] {
+            Expr::Ident(id, _) => *id == sym,
+            Expr::Variable(v) => {
+                crate::ast::text_value_to_string(ast, &v.name) == ast.strings.resolve(&sym)
+            }
+            _ => false,
+        }
+    }
+    fn check_stmt(ast: &Ast, stmt: &Statement, sym: StrId) -> bool {
+        match stmt {
+            Statement::Assign(a) => {
+                for &target in &a.targets {
+                    if expr_has_sym(ast, target, sym) {
+                        return true;
+                    }
+                }
+            }
+            Statement::If(i) => {
+                if i.then_body.iter().any(|s| check_stmt(ast, s, sym)) {
+                    return true;
+                }
+                for (_, b) in &i.elif_branches {
+                    if b.iter().any(|s| check_stmt(ast, s, sym)) {
+                        return true;
+                    }
+                }
+                if let Some(eb) = &i.else_body
+                    && eb.iter().any(|s| check_stmt(ast, s, sym))
+                {
+                    return true;
+                }
+            }
+            Statement::While(w) => {
+                if w.body.iter().any(|s| check_stmt(ast, s, sym)) {
+                    return true;
+                }
+            }
+            Statement::For(f) => {
+                if f.body.iter().any(|s| check_stmt(ast, s, sym)) {
+                    return true;
+                }
+            }
+            Statement::Match(m) => {
+                for arm in &m.arms {
+                    if arm.body.iter().any(|s| check_stmt(ast, s, sym)) {
+                        return true;
+                    }
+                }
+            }
+            Statement::TryCatch(tc) => {
+                if tc.try_body.iter().any(|s| check_stmt(ast, s, sym))
+                    || tc.catch_body.iter().any(|s| check_stmt(ast, s, sym))
+                {
+                    return true;
+                }
+            }
+            Statement::Cfg(_, inner) if check_stmt(ast, inner, sym) => {
+                return true;
+            }
+            _ => {}
+        }
+        false
+    }
+    stmts.iter().any(|s| check_stmt(ast, s, sym))
+}
+
+impl HirBuilder<'_> {
     #[expect(
         clippy::too_many_lines,
         clippy::cognitive_complexity,
@@ -277,24 +439,37 @@ impl HirBuilder<'_> {
             }
         }
 
+        let prev_aliases = self.inline_aliases.clone();
+        for (i, param) in f.params.iter().enumerate() {
+            let p_sym = self.sym(param.name);
+            if let Some(arg) = args.get(i)
+                && let Some(caller_var) = self.get_expr_target_var(arg.value)
+                && p_sym != caller_var
+            {
+                self.inline_aliases.insert(p_sym, caller_var);
+            }
+        }
+
+        let callee_counts = self.collect_field_reads(&f.body);
+        for ((obj, prop), count) in callee_counts {
+            let mut resolved = obj;
+            let mut visited = HashSet::new();
+            while let Some(&aliased) = self.inline_aliases.get(&resolved) {
+                if !visited.insert(resolved) || aliased == resolved {
+                    break;
+                }
+                resolved = aliased;
+            }
+            *self
+                .active_field_read_counts
+                .entry((resolved, prop))
+                .or_default() += count;
+        }
+
         let mut pos_idx = 0;
         let mut first_param_var = None;
         for (i, param) in f.params.iter().enumerate() {
             let p_sym = self.sym(param.name);
-            let fresh_sym = Symbol::from(format!("__inl_{}_{}", p_sym, self.temp_n));
-            self.temp_n += 1;
-            let p_var_raw = self.add(Hir::Var(VarName(fresh_sym)));
-            let p_var = self.wrap_scope(p_var_raw, self.default_scope);
-            if i == 0 {
-                first_param_var = Some(p_var);
-            }
-            self.declare(
-                p_sym,
-                Binding::Var {
-                    name: fresh_sym,
-                    scope: self.default_scope,
-                },
-            );
 
             let actual_arg_ty = if let Some(arg) = args.get(i) {
                 self.types.get(&arg.value).cloned()
@@ -302,16 +477,24 @@ impl HirBuilder<'_> {
                 None
             };
 
-            if let Some(arg_ty) = actual_arg_ty {
-                self.ir_ctx.record_var_type(fresh_sym, arg_ty);
-            } else if let Some(ty_id) = param.ty {
-                let ty_str = self.ast.strings.resolve(&ty_id);
-                if let Ok(ty) = self.parse_decl_type_str(ty_str) {
-                    self.ir_ctx.record_var_type(fresh_sym, ty);
-                }
-            }
-
             if param.spread == 1 {
+                let fresh_sym = Symbol::from(format!("__inl_{}_{}", p_sym, self.temp_n));
+                self.temp_n += 1;
+                let p_var_raw = self.add(Hir::Var(VarName(fresh_sym)));
+                let p_var = self.wrap_scope(p_var_raw, self.default_scope);
+                if i == 0 {
+                    first_param_var = Some(p_var);
+                }
+                self.declare(
+                    p_sym,
+                    Binding::Var {
+                        name: fresh_sym,
+                        scope: self.default_scope,
+                    },
+                );
+                if let Some(arg_ty) = actual_arg_ty {
+                    self.ir_ctx.record_var_type(fresh_sym, arg_ty);
+                }
                 let mut list_ids = Vec::new();
                 while pos_idx < evaluated_pos.len() {
                     list_ids.push(evaluated_pos[pos_idx]);
@@ -320,6 +503,23 @@ impl HirBuilder<'_> {
                 let list = self.add(Hir::List(list_ids.into_boxed_slice()));
                 bindings.push((p_var, list));
             } else if param.spread == 2 {
+                let fresh_sym = Symbol::from(format!("__inl_{}_{}", p_sym, self.temp_n));
+                self.temp_n += 1;
+                let p_var_raw = self.add(Hir::Var(VarName(fresh_sym)));
+                let p_var = self.wrap_scope(p_var_raw, self.default_scope);
+                if i == 0 {
+                    first_param_var = Some(p_var);
+                }
+                self.declare(
+                    p_sym,
+                    Binding::Var {
+                        name: fresh_sym,
+                        scope: self.default_scope,
+                    },
+                );
+                if let Some(arg_ty) = actual_arg_ty {
+                    self.ir_ctx.record_var_type(fresh_sym, arg_ty);
+                }
                 let mut map_ids = Vec::new();
                 for (name, val_id) in &evaluated_named {
                     let nid = self.str_lit(name.clone());
@@ -330,48 +530,86 @@ impl HirBuilder<'_> {
                 bindings.push((p_var, map));
             } else {
                 let p_name = p_sym.to_string();
-                if let Some(pos) = predefined_args.iter().position(|(n, _)| *n == p_name) {
-                    let (_, val_id) = predefined_args.remove(pos);
-                    bindings.push((p_var, val_id));
-                    continue;
-                }
-
                 let is_self_name = crate::utils::is_self_param(p_sym.as_str());
                 let is_self_param = is_init && i == 0 && is_self_name;
-                if is_self_param {
-                    let is_single =
-                        class_info.is_some_and(|c| self.ir_ctx.is_single_field_class(c));
-                    let slots_len = class_info.map(|c| c.fields.len()).unwrap_or(0);
-                    let zero = self.add(Hir::Num(0.0.into()));
-                    let list = if is_single {
-                        zero
+                let arg_val =
+                    if let Some(pos) = predefined_args.iter().position(|(n, _)| *n == p_name) {
+                        predefined_args.remove(pos).1
+                    } else if is_self_param {
+                        let is_single =
+                            class_info.is_some_and(|c| self.ir_ctx.is_single_field_class(c));
+                        let slots_len = class_info.map(|c| c.fields.len()).unwrap_or(0);
+                        let zero = self.add(Hir::Num(0.0.into()));
+                        if is_single {
+                            zero
+                        } else {
+                            self.add(Hir::List(vec![zero; slots_len].into_boxed_slice()))
+                        }
+                    } else if let Some(val) = evaluated_named.remove(&p_name) {
+                        val
+                    } else if pos_idx < evaluated_pos.len() {
+                        let v = evaluated_pos[pos_idx];
+                        pos_idx += 1;
+                        v
+                    } else if let Some(def) = param.default {
+                        self.conv_expr(def)?
                     } else {
-                        self.add(Hir::List(vec![zero; slots_len].into_boxed_slice()))
+                        self.nop()
                     };
-                    bindings.push((p_var, list));
-                    continue;
-                }
 
-                let arg_val = if let Some(val) = evaluated_named.remove(&p_name) {
-                    val
-                } else if pos_idx < evaluated_pos.len() {
-                    let v = evaluated_pos[pos_idx];
-                    pos_idx += 1;
-                    v
-                } else if let Some(def) = param.default {
-                    self.conv_expr(def)?
+                let is_mutated = body_mutates_sym(self.ast, &f.body, param.name);
+                if !is_mutated
+                    && let Some((existing_sym, existing_scope)) =
+                        extract_var_binding(self.nodes.as_slice(), arg_val)
+                {
+                    if i == 0 {
+                        first_param_var = Some(arg_val);
+                    }
+                    self.declare(
+                        p_sym,
+                        Binding::Var {
+                            name: existing_sym,
+                            scope: existing_scope,
+                        },
+                    );
+                    if let Some(arg_ty) = actual_arg_ty {
+                        self.ir_ctx.record_var_type(existing_sym, arg_ty);
+                    }
                 } else {
-                    self.nop()
-                };
-                bindings.push((p_var, arg_val));
+                    let fresh_sym = Symbol::from(format!("__inl_{}_{}", p_sym, self.temp_n));
+                    self.temp_n += 1;
+                    let p_var_raw = self.add(Hir::Var(VarName(fresh_sym)));
+                    let p_var = self.wrap_scope(p_var_raw, self.default_scope);
+                    if i == 0 {
+                        first_param_var = Some(p_var);
+                    }
+                    self.declare(
+                        p_sym,
+                        Binding::Var {
+                            name: fresh_sym,
+                            scope: self.default_scope,
+                        },
+                    );
+
+                    if let Some(arg_ty) = actual_arg_ty {
+                        self.ir_ctx.record_var_type(fresh_sym, arg_ty);
+                    } else if let Some(ty_id) = param.ty {
+                        let ty_str = self.ast.strings.resolve(&ty_id);
+                        if let Ok(ty) = self.parse_decl_type_str(ty_str) {
+                            self.ir_ctx.record_var_type(fresh_sym, ty);
+                        }
+                    }
+                    bindings.push((p_var, arg_val));
+                }
             }
         }
 
         let prev_ret = self.inline_return_var.take();
         self.inline_return_var = Some(ret_var);
 
+        let structured_body = crate::ast::structure_early_returns(&f.body);
         let mut body_ids = Vec::new();
-        for stmt in &f.body {
+        for stmt in &structured_body {
             body_ids.push(self.conv_stmt(stmt)?);
         }
 
@@ -383,6 +621,7 @@ impl HirBuilder<'_> {
         }
 
         self.inline_return_var = prev_ret;
+        self.inline_aliases = prev_aliases;
         self.pop();
 
         body_ids.push(ret_var);
@@ -472,7 +711,7 @@ impl HirBuilder<'_> {
                             )
                         })
                         .collect::<Vec<_>>();
-                    let (args_list, b) = self.conv_args(&named_args, None, false, false)?;
+                    let (args_list, b, _) = self.conv_args(&named_args, None, false, false)?;
                     let target_id = self.str_lit(self.sym(p.name));
                     let node = self.add(Hir::ProcCall([target_id, args_list]));
                     return Ok(self.wrap_lets(node, b));
@@ -519,7 +758,7 @@ impl HirBuilder<'_> {
                 .first()
                 .is_some_and(|p| crate::utils::is_self_param(self.sym(p.name).as_str()));
             let all_args = if has_self {
-                let mut a = vec![positional(c.target)];
+                let mut a = vec![receiver(c.target)];
                 a.extend(c.args.iter().cloned());
                 a
             } else {
@@ -527,6 +766,17 @@ impl HirBuilder<'_> {
             };
             if f.is_inline {
                 return self.expand_inline_func_call(&f, &all_args, Vec::new(), Vec::new(), None);
+            }
+            if has_self && let Some(target_var) = self.get_expr_target_var(c.target) {
+                self.cached_field_vars
+                    .retain(|(obj, _), _| *obj != target_var);
+            }
+            for arg in &c.args {
+                if arg.is_ref
+                    && let Some(arg_var) = self.get_expr_target_var(arg.value)
+                {
+                    self.cached_field_vars.retain(|(obj, _), _| *obj != arg_var);
+                }
             }
             let target_id = self.str_lit(self.sym(f.name));
             let (args_list, b) = self.build_args_list(&f, &all_args, false)?;
@@ -546,7 +796,7 @@ impl HirBuilder<'_> {
                 .first()
                 .is_some_and(|param| crate::utils::is_self_param(self.sym(param.name).as_str()));
             let all_args = if has_self {
-                let mut a = vec![positional(c.target)];
+                let mut a = vec![receiver(c.target)];
                 a.extend(c.args.iter().cloned());
                 a
             } else {
@@ -567,7 +817,7 @@ impl HirBuilder<'_> {
                     )
                 })
                 .collect::<Vec<_>>();
-            let (args_list, b) = self.conv_args(&named_args, None, false, false)?;
+            let (args_list, b, _) = self.conv_args(&named_args, None, false, false)?;
             let target_id = self.str_lit(self.sym(p.name));
             let node = self.add(Hir::ProcCall([target_id, args_list]));
             return Ok(self.wrap_lets(node, b));
@@ -673,10 +923,15 @@ impl HirBuilder<'_> {
 
         let mut positional_args = Vec::new();
         let mut named_args = HashMap::new();
+        let mut positional_refs = Vec::new();
+        let mut named_refs = HashMap::new();
         for arg in args {
             if let Some(name) = arg.name {
-                named_args.insert(self.sym(name).to_string(), arg.value);
+                let key = self.sym(name).to_string();
+                named_refs.insert(key.clone(), arg.is_ref);
+                named_args.insert(key, arg.value);
             } else {
+                positional_refs.push(arg.is_ref);
                 positional_args.push(arg.value);
             }
         }
@@ -688,19 +943,29 @@ impl HirBuilder<'_> {
             }
 
             let p_name = self.sym(param.name).to_string();
-            let arg_val = if let Some(val) = named_args.remove(&p_name) {
+            let (arg_val, passed_by_ref) = if let Some(val) = named_args.remove(&p_name) {
                 let (v, b) = self.atomize(val)?;
                 bindings.extend(b);
-                v
+                (v, named_refs.remove(&p_name).unwrap_or(false))
             } else if pos_idx < positional_args.len() {
                 let (v, b) = self.atomize(positional_args[pos_idx])?;
                 bindings.extend(b);
+                let passed_by_ref = positional_refs[pos_idx];
                 pos_idx += 1;
-                v
+                (v, passed_by_ref)
             } else if let Some(def) = param.default {
-                self.conv_expr(def)?
+                (self.conv_expr(def)?, false)
             } else {
-                self.nop()
+                (self.nop(), false)
+            };
+            // A reference argument must stay a variable all the way to codegen.
+            // Marking it with the parameter name makes MIR take the reference
+            // path (`lower_ref_arg`) instead of copying the value.
+            let arg_val = if passed_by_ref {
+                let name_id = self.add(Hir::Str(StrLit(Symbol::from(p_name.clone()))));
+                self.add(Hir::Named([name_id, arg_val]))
+            } else {
+                arg_val
             };
             ids.push(arg_val);
         }

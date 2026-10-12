@@ -121,6 +121,13 @@ impl<'a> Shared<'a> {
         self.links.borrow().get(name).cloned()
     }
 
+    /// Returns the target variable name if `name` is a link.
+    #[must_use]
+    #[tracing::instrument(level = "trace", skip(self), fields(name = %name))]
+    pub fn link_target(&self, name: &str) -> Option<String> {
+        self.links.borrow().get(name).map(|l| l.name.clone())
+    }
+
     /// How many variables the store has, links included.
     #[must_use]
     #[tracing::instrument(level = "trace", skip(self))]
@@ -167,7 +174,16 @@ impl<'a> Shared<'a> {
     #[tracing::instrument(level = "trace", skip(self), fields(name = %name))]
     pub fn peek(&self, name: &str) -> Option<Rt<'a>> {
         match self.link_to(name) {
-            Some(link) => link.store.peek(&link.name),
+            Some(link) => {
+                if link.store.is_link(&link.name) {
+                    // JustMC platform limitation / bug:
+                    // Multi-level reference forwarding without compiler soft fix fails to resolve
+                    // on the server, returning Number 0 instead of dereferencing through the chain.
+                    Some(Some(crate::value::number(0.0)))
+                } else {
+                    link.store.peek(&link.name)
+                }
+            }
             None => self.vars.borrow().get(name).cloned(),
         }
     }
@@ -219,7 +235,19 @@ impl<'a> Shared<'a> {
     #[tracing::instrument(level = "trace", skip(self), fields(name = %name, value = ?value))]
     pub fn set(&self, name: &str, value: Rt<'a>) {
         match self.link_to(name) {
-            Some(link) => link.store.set(&link.name, value),
+            Some(link) => {
+                if link.store.is_link(&link.name) {
+                    // JustMC platform limitation: writes to chained multi-level references
+                    // without compiler soft fix get swallowed into the intermediate frame slot
+                    // rather than propagating through the chain.
+                    link.store
+                        .vars
+                        .borrow_mut()
+                        .insert(link.name.clone(), value);
+                } else {
+                    link.store.set(&link.name, value);
+                }
+            }
             None => {
                 self.vars.borrow_mut().insert(name.to_owned(), value);
             }

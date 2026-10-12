@@ -81,6 +81,10 @@ impl<'a> Runtime<'a> {
     /// false would send the program down a branch the server would not have
     /// taken.
     #[tracing::instrument(level = "debug", skip(self, stream, op), fields(condition = ?condition))]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "dispatching all world and condition checks in one match"
+    )]
     pub(crate) fn condition(
         &mut self,
         stream: &mut Stream<'a>,
@@ -158,6 +162,17 @@ impl<'a> Runtime<'a> {
                     .players()
                     .get(idx)
                     .is_some_and(|p| p.is_gliding))
+            }
+            ActionId::IfPlayerIsOnGround => {
+                let target = self.primary(stream)?;
+                let Target::Player(idx) = target else {
+                    return Ok(false);
+                };
+                Ok(self
+                    .world()
+                    .players()
+                    .get(idx)
+                    .is_some_and(|p| p.is_on_ground))
             }
             ActionId::IfGameBlockEquals => {
                 let [x, y, z, _, _] = self.location_arg(stream, args, "location")?;

@@ -95,7 +95,7 @@ export class item {
     @alias("айди")
     @setter
     inline function id(self: item, type: text) -> item {
-        self.set_item_type(type);
+        self = self.set_item_type(type);
         return self;
     }
 
@@ -133,7 +133,7 @@ export class item {
     @alias("теги")
     @setter
     inline function tags(self: item, tags: map) -> item {
-        repeat::for_each_map_entry(tags) { key, value ->
+        for key, value in tags {
             self = self.set_item_custom_tag(key, value);
         }
         return self;
@@ -144,7 +144,7 @@ export class item {
     @alias("пользовательские_теги")
     @setter
     inline function custom_tags(self: item, tags: map) -> item {
-        repeat::for_each_map_entry(tags) { key, value ->
+        for key, value in tags {
             self = self.set_item_custom_tag(key, value);
         }
         return self;

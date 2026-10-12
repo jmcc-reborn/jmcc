@@ -469,6 +469,7 @@ impl Parser<'_> {
             Some(Token::Game) => "game",
             Some(Token::Save) => "save",
             Some(Token::Inline) => "inline",
+            Some(Token::Cached) => "cached",
             Some(Token::Jmcc) => "jmcc",
             _ => return Ok(None),
         };
@@ -639,6 +640,7 @@ impl Parser<'_> {
                 | Token::Game
                 | Token::Save
                 | Token::Inline
+                | Token::Cached
                 | Token::Jmcc,
                 span,
                 _,

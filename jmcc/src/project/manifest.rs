@@ -1,7 +1,7 @@
 //! `jmcc.toml` manifest parser and data structures.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -118,6 +118,9 @@ pub struct Manifest {
     /// Build profiles (`[profile.<name>]`).
     #[serde(default)]
     pub profile: BTreeMap<String, ProfileConfig>,
+    /// Features table (`[features]`).
+    #[serde(default)]
+    pub features: BTreeMap<String, Vec<String>>,
 }
 
 impl Manifest {
@@ -254,6 +257,73 @@ impl Manifest {
         deps
     }
 
+    /// Returns the defined features table.
+    #[must_use]
+    pub const fn features(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.features
+    }
+
+    /// Returns the default features declared under `[features].default`.
+    #[must_use]
+    pub fn default_features(&self) -> Vec<String> {
+        self.features.get("default").cloned().unwrap_or_default()
+    }
+
+    /// Returns all declared feature names (excluding "default").
+    #[must_use]
+    pub fn all_features(&self) -> Vec<String> {
+        self.features
+            .keys()
+            .filter(|k| k.as_str() != "default")
+            .cloned()
+            .collect()
+    }
+
+    /// Resolves requested features for this package transitively.
+    ///
+    /// Returns:
+    /// - Set of enabled feature names for this package
+    /// - Set of optional dependency names activated by `dep:<name>`
+    /// - Map of `dep_name -> set of features` activated by `<dep_name>/<feat>`
+    #[must_use]
+    pub fn resolve_features(
+        &self,
+        requested: &[String],
+    ) -> (
+        HashSet<String>,
+        HashSet<String>,
+        HashMap<String, HashSet<String>>,
+    ) {
+        let mut enabled_feats = HashSet::new();
+        let mut activated_deps = HashSet::new();
+        let mut dep_features: HashMap<String, HashSet<String>> = HashMap::new();
+
+        let mut queue: VecDeque<String> = requested.iter().cloned().collect();
+
+        while let Some(feat) = queue.pop_front() {
+            if !enabled_feats.insert(feat.clone()) {
+                continue;
+            }
+
+            if let Some(sub_items) = self.features.get(&feat) {
+                for item in sub_items {
+                    if let Some(dep_name) = item.strip_prefix("dep:") {
+                        activated_deps.insert(dep_name.to_owned());
+                    } else if let Some((dep_name, dep_feat)) = item.split_once('/') {
+                        dep_features
+                            .entry(dep_name.to_owned())
+                            .or_default()
+                            .insert(dep_feat.to_owned());
+                    } else {
+                        queue.push_back(item.clone());
+                    }
+                }
+            }
+        }
+
+        (enabled_feats, activated_deps, dep_features)
+    }
+
     /// Validates basic semantic rules of the manifest.
     ///
     /// # Errors
@@ -290,6 +360,26 @@ impl Manifest {
 
         for (dep_name, dep) in &self.dependencies {
             dep.validate(dep_name)?;
+        }
+
+        // Validate features
+        let all_deps = self.all_dependencies(true);
+        for (feat_name, sub_items) in &self.features {
+            for item in sub_items {
+                if let Some(dep_name) = item.strip_prefix("dep:")
+                    && !all_deps.contains_key(dep_name)
+                {
+                    return Err(ProjectError::Generic(format!(
+                        "Feature '{feat_name}' in jmcc.toml references unknown dependency '{dep_name}' via '{item}'"
+                    )));
+                } else if let Some((dep_name, _)) = item.split_once('/')
+                    && !all_deps.contains_key(dep_name)
+                {
+                    return Err(ProjectError::Generic(format!(
+                        "Feature '{feat_name}' in jmcc.toml references unknown dependency '{dep_name}' via '{item}'"
+                    )));
+                }
+            }
         }
 
         Ok(())

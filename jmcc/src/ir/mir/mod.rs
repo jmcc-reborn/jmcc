@@ -67,9 +67,12 @@ pub enum MirError {
     },
     #[error("slice assignment is not natively supported in DiamondFire")]
     SliceAssignmentNotSupported,
+    #[error("cannot pass non-variable to reference parameter '{0}'")]
+    NonVariablePassedToRef(String),
 }
 
-enum ScopeKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum ScopeKind {
     Local,
     Game,
     Save,
@@ -102,8 +105,11 @@ pub struct MirLowerer<'a> {
     ctx: &'a IrCtx,
     nodes: NodeArena<Mir>,
     temp_n: usize,
+    ref_forward_temp_n: usize,
     edition: u16,
     var_subst: HashMap<Id, Id>,
+    named_var_subst: HashMap<(ScopeKind, Symbol), Id>,
+    current_ref_params: HashSet<String>,
 }
 
 impl<'a> MirLowerer<'a> {
@@ -114,14 +120,52 @@ impl<'a> MirLowerer<'a> {
             ctx,
             nodes: NodeArena::with_capacity(hir.len()),
             temp_n: 0,
+            ref_forward_temp_n: 0,
             edition,
             var_subst: HashMap::new(),
+            named_var_subst: HashMap::new(),
+            current_ref_params: HashSet::new(),
+        }
+    }
+
+    pub(super) fn extract_var_key(&self, id: Id) -> Option<(ScopeKind, Symbol)> {
+        match &self.hir[id] {
+            Hir::Line(inner) => self
+                .extract_var_symbol(*inner)
+                .map(|sym| (ScopeKind::Line, sym)),
+            Hir::Local(inner) => self
+                .extract_var_symbol(*inner)
+                .map(|sym| (ScopeKind::Local, sym)),
+            Hir::Game(inner) => self
+                .extract_var_symbol(*inner)
+                .map(|sym| (ScopeKind::Game, sym)),
+            Hir::Save(inner) => self
+                .extract_var_symbol(*inner)
+                .map(|sym| (ScopeKind::Save, sym)),
+            Hir::Var(name) => {
+                let default_scope = if self.edition >= 2026 {
+                    ScopeKind::Line
+                } else {
+                    ScopeKind::Local
+                };
+                Some((default_scope, name.0))
+            }
+            _ => None,
+        }
+    }
+
+    fn extract_var_symbol(&self, id: Id) -> Option<Symbol> {
+        match &self.hir[id] {
+            Hir::Var(name) => Some(name.0),
+            _ => None,
         }
     }
 
     pub(super) fn is_atomic_hir(&self, id: Id) -> bool {
         match &self.hir[id] {
             Hir::Num(_) | Hir::Bool(_) | Hir::Str(_) | Hir::Var(_) => true,
+            Hir::Text([_, content]) => matches!(&self.hir[*content], Hir::Str(_)),
+            Hir::Enum(val) => matches!(&self.hir[*val], Hir::Str(_)),
             Hir::Line(inner) | Hir::Local(inner) | Hir::Game(inner) | Hir::Save(inner) => {
                 matches!(&self.hir[*inner], Hir::Var(_))
             }
@@ -139,7 +183,57 @@ impl<'a> MirLowerer<'a> {
         let name = format!("__mt{}", self.temp_n);
         self.temp_n += 1;
         let var_id = self.add(Mir::Var(VarName(Symbol::from(name))));
-        self.add(Mir::Line(var_id))
+        if self.edition >= 2026 {
+            self.add(Mir::Line(var_id))
+        } else {
+            self.add(Mir::Local(var_id))
+        }
+    }
+
+    #[instrument(skip(self), level = "trace")]
+    fn fresh_ref_forward_temp(&mut self) -> Id {
+        let name = format!("__rf_{}", self.ref_forward_temp_n);
+        self.ref_forward_temp_n += 1;
+        let var_id = self.add(Mir::Var(VarName(Symbol::from(name))));
+        if self.edition >= 2026 {
+            self.add(Mir::Line(var_id))
+        } else {
+            self.add(Mir::Local(var_id))
+        }
+    }
+
+    pub(super) fn extract_var_name_mir(&self, id: Id) -> Option<String> {
+        match &self.nodes.as_slice()[usize::from(id)] {
+            Mir::Var(v) => Some(v.0.to_string()),
+            Mir::Line(i) | Mir::Local(i) | Mir::Game(i) | Mir::Save(i) => {
+                self.extract_var_name_mir(*i)
+            }
+            _ => None,
+        }
+    }
+
+    fn emit_nested_ref_warning(var_name: &str, param_name: &str, func_name: &str) {
+        tracing::warn!(
+            var_name,
+            param_name,
+            func_name,
+            "forwarding reference parameter to another reference parameter; applying compiler soft fix (copy-in/copy-out) for JustMC compatibility"
+        );
+        #[expect(clippy::print_stderr, reason = "compiler warning output to stderr")]
+        {
+            match crate::i18n::current_lang() {
+                crate::i18n::Lang::Ru => {
+                    eprintln!(
+                        "\x1b[1;33mпредупреждение\x1b[0m: пересылка ссылочного параметра '{var_name}' в параметр '{param_name}' функции '{func_name}'; применён софт-фикс (copy-in/copy-out) на уровне компилятора для совместимости с платформой JustMC"
+                    );
+                }
+                crate::i18n::Lang::En => {
+                    eprintln!(
+                        "\x1b[1;33mwarning\x1b[0m: forwarding reference parameter '{var_name}' to reference parameter '{param_name}' of function '{func_name}'; applied compiler soft fix (copy-in/copy-out) for JustMC platform compatibility"
+                    );
+                }
+            }
+        }
     }
 
     #[instrument(skip(self), level = "trace")]

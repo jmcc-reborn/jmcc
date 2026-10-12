@@ -141,6 +141,103 @@ pub fn compiler_diag_to_lsp(
     })
 }
 
+/// Converts a compiler [`jmcc::diagnostic::Diagnostic`] into an LSP Diagnostic directly using source text without an AST.
+#[must_use]
+pub fn compiler_diag_to_lsp_direct(
+    diag: &jmcc::diagnostic::Diagnostic,
+    source_text: &str,
+    lang: Lang,
+) -> Option<Diagnostic> {
+    let severity = match diag.level {
+        DiagnosticLevel::Error => DiagnosticSeverity::ERROR,
+        DiagnosticLevel::Warning => DiagnosticSeverity::WARNING,
+        DiagnosticLevel::Note => DiagnosticSeverity::INFORMATION,
+        DiagnosticLevel::Help => DiagnosticSeverity::HINT,
+    };
+
+    let primary_label = diag
+        .labels
+        .iter()
+        .find(|l| l.is_primary)
+        .or_else(|| diag.labels.first());
+
+    let default_range = Range {
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 0,
+            character: 1,
+        },
+    };
+
+    let range = primary_label
+        .and_then(|label| {
+            let index = LineIndex::new(source_text);
+            let start_pos = TextSize::from(u32::try_from(label.span.start).ok()?);
+            let end_pos = TextSize::from(u32::try_from(label.span.end).ok()?);
+
+            let start_lc = index.try_line_col(start_pos)?;
+            let end_lc = index.try_line_col(end_pos)?;
+
+            let start_wide = index.to_wide(WideEncoding::Utf16, start_lc)?;
+            let end_wide = index.to_wide(WideEncoding::Utf16, end_lc)?;
+
+            let start = Position {
+                line: start_wide.line,
+                character: start_wide.col,
+            };
+            let mut end = Position {
+                line: end_wide.line,
+                character: end_wide.col,
+            };
+            if start == end {
+                end.character += 1;
+            }
+
+            Some(Range { start, end })
+        })
+        .unwrap_or(default_range);
+
+    let mut message = diag.message.clone();
+    if let Some(lbl) = primary_label.and_then(|l| l.label.as_ref())
+        && !lbl.is_empty()
+        && !message.contains(lbl)
+    {
+        message.push_str(&format!(" ({lbl})"));
+    }
+
+    let note_prefix = if lang == Lang::Ru {
+        "Примечание:"
+    } else {
+        "Note:"
+    };
+    let help_prefix = if lang == Lang::Ru {
+        "Подсказка:"
+    } else {
+        "Help:"
+    };
+    for note in &diag.notes {
+        message.push_str(&format!("\n{note_prefix} {note}"));
+    }
+    for help in &diag.helps {
+        message.push_str(&format!("\n{help_prefix} {help}"));
+    }
+
+    Some(Diagnostic {
+        range,
+        severity: Some(severity),
+        code: diag.code.map(|c| NumberOrString::String(c.to_owned())),
+        source: Some("jmc-analyzer".to_owned()),
+        message,
+        related_information: None,
+        tags: None,
+        code_description: None,
+        data: None,
+    })
+}
+
 /// Converts semantic error list into LSP Diagnostics for the target file.
 #[must_use]
 pub fn semantic_errors_to_lsp(

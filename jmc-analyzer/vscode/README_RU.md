@@ -38,6 +38,6 @@ cargo run -p jmc-analyzer -- pack
 Собранный `.vsix` размещается в `jmc-analyzer/out/justcode-lang-<версия>.vsix`. Установка в VS Code:
 
 ```shell
-code --install-extension jmc-analyzer/out/justcode-lang-0.2.0.vsix
+code --install-extension jmc-analyzer/out/justcode-lang-0.3.0.vsix
 ```
 

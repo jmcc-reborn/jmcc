@@ -36,6 +36,12 @@ pub struct TestOptions {
     pub locked: bool,
     /// Disallow network access.
     pub offline: bool,
+    /// Features to enable.
+    pub features: Vec<String>,
+    /// Enable all available features.
+    pub all_features: bool,
+    /// Do not enable default features.
+    pub no_default_features: bool,
 }
 
 /// Status of an individual test execution.
@@ -145,9 +151,34 @@ fn run_project_tests(
     options: &TestOptions,
     summary: &mut TestSummary,
 ) -> Result<()> {
-    // Resolve dependencies with dev dependencies
-    let graph = project.resolve_dependencies_ext(true, options.locked, options.offline)?;
+    let mut requested = options.features.clone();
+    if options.all_features {
+        requested.extend(project.manifest.all_features());
+    } else if !options.no_default_features {
+        requested.extend(project.manifest.default_features());
+    }
+
+    // Resolve dependencies with dev dependencies and features
+    let graph = project.resolve_dependencies_with_features(
+        true,
+        options.locked,
+        options.offline,
+        &requested,
+    )?;
     let package_roots = graph.to_package_roots();
+    let package_features = graph.package_features.clone();
+    let root_feats: Vec<String> = graph
+        .package_features
+        .get(project.name())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let known_features = if project.manifest.features.is_empty() {
+        None
+    } else {
+        Some(project.manifest.all_features().into_iter().collect())
+    };
 
     let compile_opts = CompileOptions {
         opt_level: 0,
@@ -160,6 +191,9 @@ fn run_project_tests(
         output: None,
         locale: options.locale.clone().or_else(|| project.manifest.locale()),
         package_roots,
+        package_features,
+        features: root_feats,
+        known_features,
         passes: Vec::new(),
         disable_passes: Vec::new(),
         locked: options.locked,
@@ -209,6 +243,9 @@ fn run_file_tests(path: &Path, options: &TestOptions, summary: &mut TestSummary)
         output: None,
         locale: options.locale.clone(),
         package_roots: HashMap::new(),
+        package_features: HashMap::new(),
+        features: options.features.clone(),
+        known_features: None,
         passes: Vec::new(),
         disable_passes: Vec::new(),
         locked: options.locked,
@@ -229,10 +266,15 @@ fn run_file_tests_with_opts(
     summary: &mut TestSummary,
 ) -> Result<()> {
     // Parse AST to discover test functions and attributes
-    let ast = crate::ast::import::parse_file_with_packages(
+    let root_features: std::collections::HashSet<String> =
+        compile_opts.features.iter().cloned().collect();
+    let ast = crate::ast::import::parse_file_with_features(
         path,
         compile_opts.edition,
         compile_opts.package_roots.clone(),
+        root_features,
+        compile_opts.package_features.clone(),
+        compile_opts.known_features.clone(),
     )?;
 
     let test_cases = discover_test_cases(&ast, path);

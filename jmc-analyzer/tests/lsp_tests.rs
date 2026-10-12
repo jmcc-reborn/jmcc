@@ -1562,3 +1562,360 @@ fun test(d: Damageable, hp: HP, s: State) {
         "Alias hover failed: {c4}"
     );
 }
+
+#[test]
+fn test_cyrillic_utf16_completion_no_panic() {
+    let code = "перем Привет = 42;\nПривет.";
+    let (state, uri) = create_test_server("file:///tmp/test_cyrillic_utf16.jc", code);
+    let doc = state.documents.get(&uri).expect("doc should exist");
+
+    // Position after "Привет." (line 1, character 7 in UTF-16)
+    let params = lsp_types::CompletionParams {
+        text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 1,
+                character: 7,
+            },
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+        context: None,
+    };
+
+    // This should NOT panic with "byte index is not a char boundary"!
+    let items = jmc_analyzer::lsp::completion::provide_completions(doc, &params);
+    assert!(!items.is_empty());
+}
+
+#[test]
+fn test_self_and_class_member_completion() {
+    let code = r#"
+class PlayerState {
+    var health: number;
+    var name: text;
+
+    function get_health(self: PlayerState) -> number {
+        return self.
+    }
+}
+"#;
+    let (state, uri) = create_test_server("file:///tmp/test_self_comp.jc", code);
+    let doc = state.documents.get(&uri).expect("doc should exist");
+
+    // Position after "return self." (line 6, character 20)
+    let params = lsp_types::CompletionParams {
+        text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 6,
+                character: 20,
+            },
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+        context: None,
+    };
+
+    let items = jmc_analyzer::lsp::completion::provide_completions(doc, &params);
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.contains(&"health"),
+        "Completions for self. must contain field 'health': {labels:?}"
+    );
+    assert!(
+        labels.contains(&"name"),
+        "Completions for self. must contain field 'name': {labels:?}"
+    );
+    assert!(
+        labels.contains(&"get_health"),
+        "Completions for self. must contain method 'get_health': {labels:?}"
+    );
+}
+
+#[test]
+fn test_dot_action_completion() {
+    let code = "player.";
+    let (state, uri) = create_test_server("file:///tmp/test_dot_act.jc", code);
+    let doc = state.documents.get(&uri).expect("doc should exist");
+
+    let params = lsp_types::CompletionParams {
+        text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 0,
+                character: 7,
+            },
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+        context: None,
+    };
+
+    let items = jmc_analyzer::lsp::completion::provide_completions(doc, &params);
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.contains(&"teleport") || labels.contains(&"send_message"),
+        "Completions for player. must contain JustMC actions: {labels:?}"
+    );
+}
+
+#[test]
+fn test_syntax_error_diagnostic_position_not_zero() {
+    let code = r#"
+function valid_one() {
+    var x = 1;
+}
+
+function broken_syntax( {
+    // missing closing paren on line 5
+}
+"#;
+    let (state, uri) = create_test_server("file:///tmp/test_syntax_err_pos.jc", code);
+    let doc = state.documents.get(&uri).expect("doc should exist");
+
+    assert!(
+        !doc.diagnostics.is_empty(),
+        "Must have syntax error diagnostic"
+    );
+    let diag = &doc.diagnostics[0];
+    assert!(
+        diag.range.start.line > 0,
+        "Syntax error diagnostic must NOT be at line 0: line {}, col {}",
+        diag.range.start.line,
+        diag.range.start.character
+    );
+}
+
+#[test]
+fn test_syntax_error_completion_fallback() {
+    let code = r#"
+function calculate_score() {
+    var player_score = 100;
+}
+broken syntax here @@@!
+"#;
+    let (state, uri) = create_test_server("file:///tmp/test_syntax_err_comp.jc", code);
+    let doc = state.documents.get(&uri).expect("doc should exist");
+
+    let params = lsp_types::CompletionParams {
+        text_document_position: lsp_types::TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri },
+            position: Position {
+                line: 5,
+                character: 0,
+            },
+        },
+        work_done_progress_params: Default::default(),
+        partial_result_params: Default::default(),
+        context: None,
+    };
+
+    let items = jmc_analyzer::lsp::completion::provide_completions(doc, &params);
+    assert!(
+        !items.is_empty(),
+        "Completions must not be empty even on syntax error"
+    );
+    let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    assert!(
+        labels.contains(&"player_score") || labels.contains(&"calculate_score"),
+        "Fallback completions must contain identifiers from text: {labels:?}"
+    );
+}
+
+#[test]
+fn test_inlay_hint_marks_reference_argument() {
+    let code = r#"
+class Box {
+    var value: number;
+}
+
+function touch(ref box: Box, amount: number) {
+    box.value = box.value + amount;
+}
+
+function demo() {
+    var box = Box();
+    touch(box, 5);
+}
+"#;
+    let (state, uri) = create_test_server("file:///tmp/test_ref_inlay.jc", code);
+    let doc = state.documents.get(&uri).expect("doc should exist");
+
+    let params = lsp_types::InlayHintParams {
+        text_document: TextDocumentIdentifier { uri },
+        range: lsp_types::Range::default(),
+        work_done_progress_params: Default::default(),
+    };
+
+    let hints = jmc_analyzer::lsp::inlay_hints::provide_inlay_hints(doc, &params)
+        .expect("hints must be computed");
+    let labels: Vec<String> = hints
+        .iter()
+        .filter_map(|hint| match &hint.label {
+            lsp_types::InlayHintLabel::String(label) => Some(label.clone()),
+            lsp_types::InlayHintLabel::LabelParts(_) => None,
+        })
+        .collect();
+
+    assert!(
+        labels.iter().any(|label| label == "ref"),
+        "A reference argument must be marked with a 'ref' inlay hint, got {labels:?}"
+    );
+    assert!(
+        labels.iter().any(|label| label == "amount:"),
+        "A value argument must keep its parameter name hint, got {labels:?}"
+    );
+
+    let ref_hint = hints
+        .iter()
+        .find(|hint| {
+            matches!(&hint.label, lsp_types::InlayHintLabel::String(label) if label == "ref")
+        })
+        .expect("ref hint");
+    let amount_hint = hints
+        .iter()
+        .find(|hint| {
+            matches!(&hint.label, lsp_types::InlayHintLabel::String(label) if label == "amount:")
+        })
+        .expect("amount hint");
+    let ref_first = ref_hint.position.line < amount_hint.position.line
+        || (ref_hint.position.line == amount_hint.position.line
+            && ref_hint.position.character <= amount_hint.position.character);
+    assert!(
+        ref_first,
+        "The ref hint must stand before the value argument hint"
+    );
+}
+
+#[test]
+fn test_btna_main_diagnostics() {
+    let main_path = PathBuf::from("/home/noviui/JCProjects/btna/src/main.jc");
+    if !main_path.exists() {
+        return;
+    }
+    let mut state = ServerState::new();
+    state.workspace_root = Some(PathBuf::from("/home/noviui/JCProjects/btna"));
+    let content = std::fs::read_to_string(&main_path).unwrap();
+    let uri = Url::from_file_path(&main_path).unwrap();
+    state.open_document(uri.clone(), 1, content);
+    let doc = state.documents.get(&uri).unwrap();
+    let errors: Vec<_> = doc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Some(lsp_types::DiagnosticSeverity::ERROR))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "Expected 0 error diagnostics, found: {errors:?}"
+    );
+}
+
+#[test]
+fn test_project_default_features_in_analyzer() {
+    let temp_dir = std::env::temp_dir().join(format!("jmcc_lsp_feat_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(temp_dir.join("src")).unwrap();
+
+    let manifest = r#"
+[package]
+name = "feat_test"
+version = "0.1.0"
+edition = 2026
+
+[features]
+default = ["my_feature"]
+my_feature = []
+"#;
+    std::fs::write(temp_dir.join("jmcc.toml"), manifest).unwrap();
+
+    let code = r#"
+class Foo {
+    function bar(self: Foo) -> number {
+        return 42;
+    }
+}
+
+@cfg(feature = "my_feature")
+var x: Foo = Foo();
+
+function test() {
+    x.bar();
+}
+"#;
+    let main_path = temp_dir.join("src").join("main.jc");
+    std::fs::write(&main_path, code).unwrap();
+
+    let mut state = ServerState::new();
+    state.workspace_root = Some(temp_dir.clone());
+    let uri = Url::from_file_path(&main_path).unwrap();
+    state.open_document(uri.clone(), 1, code.to_owned());
+    let doc = state.documents.get(&uri).unwrap();
+    let errors: Vec<_> = doc
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Some(lsp_types::DiagnosticSeverity::ERROR))
+        .collect();
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    assert!(
+        errors.is_empty(),
+        "Expected 0 error diagnostics with default feature active, got: {errors:?}"
+    );
+}
+
+#[test]
+fn test_undeclared_var_method_call_suppresses_cascade() {
+    let code = r#"
+function test() {
+    non_existent.process();
+}
+"#;
+    let (state, uri) = create_test_server("file:///tmp/test_undeclared.jc", code);
+    let doc = state.documents.get(&uri).unwrap();
+    let err_codes: Vec<Option<String>> = doc
+        .diagnostics
+        .iter()
+        .map(|d| {
+            d.code.as_ref().and_then(|c| match c {
+                lsp_types::NumberOrString::String(s) => Some(s.clone()),
+                _ => None,
+            })
+        })
+        .collect();
+
+    assert!(
+        err_codes.contains(&Some("E0005".to_string())),
+        "Must contain E0005 (undeclared variable)"
+    );
+    assert!(
+        !err_codes.contains(&Some("E0003".to_string())),
+        "Must NOT contain E0003 on unresolved type variable"
+    );
+}
+
+#[test]
+fn test_process_method_call_semantic_token() {
+    let code = r#"
+class Handler {
+    function process(self: Handler) {}
+}
+
+function test() {
+    var h: Handler = Handler();
+    h.process();
+}
+"#;
+    let (state, uri) = create_test_server("file:///tmp/test_process_tok.jc", code);
+    let doc = state.documents.get(&uri).expect("doc should exist");
+    let ast = doc.ast.as_ref().expect("ast should exist");
+    let tokens = compute_semantic_tokens(ast, &doc.path);
+    let has_method_token = tokens
+        .data
+        .iter()
+        .any(|t| t.token_type == TokenType::Method as u32);
+    assert!(
+        has_method_token,
+        "Method 'process' must have TokenType::Method semantic token"
+    );
+}

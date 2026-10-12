@@ -145,6 +145,17 @@ pub trait HirEmitter {
             _ => false,
         }
     }
+
+    /// Checks if a node is an existing scoped variable.
+    fn is_hir_var(&self, id: Id) -> bool {
+        match self.node(id) {
+            Hir::Var(_) => true,
+            Hir::Line(i) | Hir::Game(i) | Hir::Save(i) | Hir::Local(i) => {
+                matches!(self.node(*i), Hir::Var(_))
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Result of converting an AST binary operator to a HIR node.

@@ -60,7 +60,7 @@ export class ArrayIterator<T> implements Iterator<T>, Iterable<T> {
     @alias("есть_следующий")
     @alias("есть_след")
     function has_next(self: ArrayIterator<T>) -> boolean {
-        return self.index < variable::get_list_length(self.array);
+        return self.index < self.array.len();
     }
 
     /// RU:
@@ -83,7 +83,7 @@ export class ArrayIterator<T> implements Iterator<T>, Iterable<T> {
     function to_array(self: ArrayIterator<T>) -> array<T> {
         var res = [];
         while self.has_next() {
-            res = variable::append_list(res, [self.next()]);
+            res.push(self.next());
         }
         return res;
     }
@@ -113,7 +113,7 @@ export class MapKeyIterator<K, V> implements Iterator<K>, Iterable<K> {
     /// EN:
     /// Initializes a map keys iterator.
     function __init__(self: MapKeyIterator<K, V>, m: map<K, V>) {
-        self.keys = variable::get_map_keys(m);
+        self.keys = m.keys();
         self.index = 0;
     }
 
@@ -124,7 +124,7 @@ export class MapKeyIterator<K, V> implements Iterator<K>, Iterable<K> {
     @alias("есть_следующий")
     @alias("есть_след")
     function has_next(self: MapKeyIterator<K, V>) -> boolean {
-        return self.index < variable::get_list_length(self.keys);
+        return self.index < self.keys.len();
     }
 
     /// RU:
@@ -222,7 +222,7 @@ export class Range implements Iterable<number>, Iterator<number> {
             if self.step == 1 {
                 return diff;
             }
-            return variable::round(diff / self.step, 0, round_type = "CEIL");
+            return ceil(diff / self.step);
         }
         if self.start <= self.end {
             return 0;
@@ -232,7 +232,7 @@ export class Range implements Iterable<number>, Iterator<number> {
         if abs_step == 1 {
             return diff;
         }
-        return variable::round(diff / abs_step, 0, round_type = "CEIL");
+        return ceil(diff / abs_step);
     }
 
     /// RU:
@@ -243,7 +243,7 @@ export class Range implements Iterable<number>, Iterator<number> {
     function to_array(self: Range) -> array<number> {
         var res = [];
         for cur in self {
-            res = variable::append_list(res, [cur]);
+            res.push(cur);
         }
         return res;
     }
@@ -361,7 +361,7 @@ export class RangeInclusive implements Iterable<number>, Iterator<number> {
             if self.step == 1 {
                 return diff + 1;
             }
-            return variable::round(diff / self.step, 0, round_type = "FLOOR") + 1;
+            return floor(diff / self.step) + 1;
         }
         if self.start < self.end {
             return 0;
@@ -371,7 +371,7 @@ export class RangeInclusive implements Iterable<number>, Iterator<number> {
         if abs_step == 1 {
             return diff + 1;
         }
-        return variable::round(diff / abs_step, 0, round_type = "FLOOR") + 1;
+        return floor(diff / abs_step) + 1;
     }
 
     /// RU:
@@ -382,7 +382,7 @@ export class RangeInclusive implements Iterable<number>, Iterator<number> {
     function to_array(self: RangeInclusive) -> array<number> {
         var res = [];
         for cur in self {
-            res = variable::append_list(res, [cur]);
+            res.push(cur);
         }
         return res;
     }

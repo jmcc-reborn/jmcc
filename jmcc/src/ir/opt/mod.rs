@@ -6,13 +6,13 @@ use egg::{Id, Language, RecExpr};
 
 /// Declares a pass dispatcher enum for a pass family.
 macro_rules! dispatch_passes {
-    ($name:ident : $trait:ident < $lang:ident > { $($variant:ident => $inner:ty),+ $(,)? }) => {
+    ($name:ident : ModulePass < $lang:ident > { $($variant:ident => $inner:ty),+ $(,)? }) => {
         #[derive(Debug, Clone)]
         pub enum $name {
             $($variant($inner)),+
         }
 
-        impl $trait<$lang> for $name {
+        impl ModulePass<$lang> for $name {
             const OPT_LEVEL: u8 = 0;
 
             fn opt_level(&self) -> u8 {
@@ -24,6 +24,34 @@ macro_rules! dispatch_passes {
             fn run(&self, expr: &RecExpr<$lang>) -> RecExpr<$lang> {
                 match self {
                     $($name::$variant(p) => p.run(expr)),+
+                }
+            }
+        }
+    };
+    ($name:ident : FunctionPass < $lang:ident > { $($variant:ident => $inner:ty),+ $(,)? }) => {
+        #[derive(Debug, Clone)]
+        pub enum $name {
+            $($variant($inner)),+
+        }
+
+        impl FunctionPass<$lang> for $name {
+            const OPT_LEVEL: u8 = 0;
+
+            fn opt_level(&self) -> u8 {
+                match self {
+                    $($name::$variant(p) => p.opt_level()),+
+                }
+            }
+
+            fn run(&self, expr: &RecExpr<$lang>) -> RecExpr<$lang> {
+                match self {
+                    $($name::$variant(p) => p.run(expr)),+
+                }
+            }
+
+            fn prepare(&mut self, module: &RecExpr<$lang>) {
+                match self {
+                    $($name::$variant(p) => p.prepare(module)),+
                 }
             }
         }
@@ -59,6 +87,14 @@ pub trait FunctionPass<L: Language>: std::fmt::Debug {
     }
 
     fn run(&self, expr: &RecExpr<L>) -> RecExpr<L>;
+
+    /// Sees the whole module once, after module passes and before each body is
+    /// split off and handed to [`Self::run`].
+    ///
+    /// A body no longer contains the declarations of the functions it calls, so
+    /// a pass that needs those (which parameters are references, for example)
+    /// records them here. The default does nothing.
+    fn prepare(&mut self, _module: &RecExpr<L>) {}
 }
 
 pub trait FunctionContainer: Language {
@@ -138,13 +174,17 @@ where
         }
     }
 
-    let active_function_passes: Vec<FP> = function_passes
+    let mut active_function_passes: Vec<FP> = function_passes
         .into_iter()
         .filter(|p| {
             let name = pass_name(p);
             check_pass(&name, p.opt_level())
         })
         .collect();
+
+    for pass in &mut active_function_passes {
+        pass.prepare(&result);
+    }
 
     if !active_function_passes.is_empty() {
         use rayon::prelude::*;

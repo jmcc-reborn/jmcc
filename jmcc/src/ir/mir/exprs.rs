@@ -26,8 +26,18 @@ impl MirLowerer<'_> {
     #[instrument(skip(self), level = "trace")]
     pub(super) fn lower_expr(&mut self, id: Id) -> Result<Id, MirError> {
         let mut actual_id = id;
-        while let Some(&next) = self.var_subst.get(&actual_id) {
-            actual_id = next;
+        loop {
+            if let Some(&next) = self.var_subst.get(&actual_id) {
+                actual_id = next;
+                continue;
+            }
+            if let Some(key) = self.extract_var_key(actual_id)
+                && let Some(&next) = self.named_var_subst.get(&key)
+            {
+                actual_id = next;
+                continue;
+            }
+            break;
         }
         let hir_node = &self.hir[actual_id];
         trace!(?hir_node, "Lowering expr");
@@ -179,7 +189,7 @@ impl MirLowerer<'_> {
         let args = vec![
             self.named_arg("variable", temp),
             self.named_arg("list", object),
-            self.named_arg("index", index),
+            self.named_arg("number", index),
             self.named_arg("default_value", default),
         ];
         let action = self.make_action("variable", "get_list_value", args);

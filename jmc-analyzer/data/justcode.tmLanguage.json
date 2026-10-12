@@ -17,6 +17,7 @@
     { "include": "#loop-label" },
     { "include": "#match-expr" },
     { "include": "#try-catch" },
+    { "include": "#method-call" },
     { "include": "#keywords" },
     { "include": "#control" },
     { "include": "#lambda" },
@@ -263,57 +264,63 @@
       ]
     },
     "try-catch": {
-      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(try|catch|throw|попытка|исключение|перехват|поймать|выбросить|бросить)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(try|catch|throw|попытка|исключение|перехват|поймать|выбросить|бросить)(?![A-Za-z0-9_а-яА-ЯёЁ])",
       "name": "keyword.control.trycatch.jc"
     },
+    "method-call": {
+      "match": "(?<=\\.)([A-Za-z_а-яА-ЯёЁ][A-Za-z0-9_а-яА-ЯёЁ]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.jc" }
+      }
+    },
     "keywords": {
-      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(function|fun|def|process|event|class|interface|enum|typealias|import|export|var|local|game|save|line|jmcc|функция|действие|определение|процесс|событие|класс|интерфейс|перечисление|тип|псевдоним|импорт|экспорт|переменная|перем|пусть|локальный|игра|сохранить|сохранение|строка)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+      "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(function|fun|def|process|event|class|interface|enum|typealias|import|export|var|local|game|save|line|jmcc|функция|действие|определение|процесс|событие|класс|интерфейс|перечисление|тип|псевдоним|импорт|экспорт|переменная|перем|пусть|локальный|игра|сохранить|сохранение|строка)(?![A-Za-z0-9_а-яА-ЯёЁ])",
       "name": "keyword.declaration.jc"
     },
     "control": {
       "patterns": [
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(if|elif|else|если|иначе|иначе_если|иначеесли)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(if|elif|else|если|иначе|иначе_если|иначеесли)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "keyword.control.conditional.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(while|for|пока|для)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(while|for|пока|для)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "keyword.control.loop.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(break|return|прервать|вернуть|возврат)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(break|return|прервать|вернуть|возврат)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "keyword.control.flow.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(inline|встраиваемый)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(inline|встраиваемый)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "storage.modifier.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(export|from|экспорт|из)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(export|from|экспорт|из)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "keyword.control.export.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(implements|extends|реализует|расширяет)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(implements|extends|реализует|расширяет)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "storage.modifier.inheritance.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(as|как)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(as|как)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "keyword.control.as.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(in|в)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(in|в)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "keyword.control.in.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(not|and|or|не|и|или)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(not|and|or|не|и|или)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "keyword.control.logical.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(ref|ссылка)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(ref|ссылка)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "storage.modifier.ref.jc"
         },
         {
-          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ])(const|константа)(?![A-Za-z0-9_а-яА-ЯёЁ])",
+          "match": "(?<![A-Za-z0-9_а-яА-ЯёЁ.])(const|константа)(?![A-Za-z0-9_а-яА-ЯёЁ])",
           "name": "storage.modifier.const.jc"
         }
       ]

@@ -35,12 +35,7 @@ export class location {
 
     inline function __subtract__(first: location, second: location) -> location {
         var x, y, z, yaw, pitch = second.get_all_coordinates();
-        variable::subtract(x, [0, x]);
-        variable::subtract(y, [0, y]);
-        variable::subtract(z, [0, z]);
-        variable::subtract(yaw, [0, yaw]);
-        variable::subtract(pitch, [0, pitch]);
-        return variable::shift_all_coordinates(first, x, y, z, yaw, pitch);
+        return variable::shift_all_coordinates(first, -x, -y, -z, -yaw, -pitch);
     }
 
     inline function __multiply__(first: location, second: location) -> location {
@@ -153,6 +148,57 @@ export class location {
 
     inline function __get_attribute__(self, key) {
         return self.get_coordinate(key);
+    }
+
+    /// RU:
+    /// Вычисляет расстояние до другой локации.
+    /// EN:
+    /// Computes the distance to another location.
+    @alias("расстояние")
+    inline function distance(
+        self: location,
+        other: location,
+        dist_type: text = "THREE_D",
+    ) -> number {
+        return variable::locations_distance(self, other, type = dist_type);
+    }
+
+    /// RU:
+    /// Возвращает вектор направления от текущей локации до целевой.
+    /// EN:
+    /// Returns the direction vector from this location to the target location.
+    @alias("вектор_к")
+    inline function direction_to(self: location, target: location) -> vector {
+        return variable::get_vector_between_locations(target, self);
+    }
+
+    /// RU:
+    /// Смещает все координаты локации на указанные значения.
+    /// EN:
+    /// Shifts all coordinates of the location by the specified values.
+    @alias("сместить")
+    inline function shift(
+        self: location,
+        x: number = 0,
+        y: number = 0,
+        z: number = 0,
+        yaw: number = 0,
+        pitch: number = 0,
+    ) -> location {
+        return variable::shift_all_coordinates(self, x, y, z, yaw, pitch);
+    }
+
+    /// RU:
+    /// Смещает одну координату локации на указанное расстояние.
+    /// EN:
+    /// Shifts a single coordinate of the location by the specified distance.
+    @alias("сместить_координату")
+    inline function shift_coord(
+        self: location,
+        distance: number,
+        coord: text,
+    ) -> location {
+        return variable::shift_coordinate(self, distance, type = coord);
     }
 }
 

@@ -7,6 +7,7 @@ pub mod goto_def;
 pub mod highlight;
 pub mod hover;
 pub mod inlay_hints;
+pub mod logging;
 pub mod references;
 pub mod rename;
 pub mod semantic_tokens;
@@ -23,7 +24,7 @@ pub use server::run_server;
 ///
 /// Returns an error if the server initialization or message loop fails.
 pub fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    run_server(None)
+    run_server(None, None)
 }
 
 /// Entry point to start the LSP server with an optional custom standard library path.
@@ -34,5 +35,17 @@ pub fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 pub fn run_with_std_path(
     std_path: Option<std::path::PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    run_server(std_path)
+    run_server(std_path, None)
+}
+
+/// Entry point to start the LSP server with custom std path and log file path.
+///
+/// # Errors
+///
+/// Returns an error if the server initialization or message loop fails.
+pub fn run_with_options(
+    std_path: Option<std::path::PathBuf>,
+    log_file: Option<std::path::PathBuf>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    run_server(std_path, log_file)
 }

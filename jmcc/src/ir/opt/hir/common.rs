@@ -16,6 +16,16 @@ pub fn get_var_name(expr: &RecExpr<Hir>, id: Id) -> Option<Symbol> {
     }
 }
 
+/// Extracts the base variable name from a mutation target, unwrapping index or slice expressions.
+#[must_use]
+pub fn get_target_var_name(expr: &RecExpr<Hir>, id: Id) -> Option<Symbol> {
+    match &expr[id] {
+        Hir::Index([obj, _]) | Hir::Slice([obj, _, _]) => get_target_var_name(expr, *obj),
+        Hir::Named([_, val]) => get_target_var_name(expr, *val),
+        _ => get_var_name(expr, id),
+    }
+}
+
 /// Same as [`get_var_name`], but over a slice of nodes before a `RecExpr` is finalized.
 #[must_use]
 pub fn get_var_name_in(nodes: &[Hir], id: Id) -> Option<Symbol> {
@@ -25,6 +35,16 @@ pub fn get_var_name_in(nodes: &[Hir], id: Id) -> Option<Symbol> {
             get_var_name_in(nodes, *inner)
         }
         _ => None,
+    }
+}
+
+/// Same as [`get_target_var_name`], but over a slice of nodes before a `RecExpr` is finalized.
+#[must_use]
+pub fn get_target_var_name_in(nodes: &[Hir], id: Id) -> Option<Symbol> {
+    match &nodes[usize::from(id)] {
+        Hir::Index([obj, _]) | Hir::Slice([obj, _, _]) => get_target_var_name_in(nodes, *obj),
+        Hir::Named([_, val]) => get_target_var_name_in(nodes, *val),
+        _ => get_var_name_in(nodes, id),
     }
 }
 
@@ -55,4 +75,47 @@ pub fn collect_declarations(expr: &RecExpr<Hir>) -> Vec<(Symbol, (Id, Id))> {
         }
     }
     decls
+}
+
+/// Collects the variables written by an action through its `variable`-typed arguments.
+pub fn collect_action_written_vars(
+    expr: &RecExpr<Hir>,
+    ids: &[Id],
+    out: &mut std::collections::HashSet<Symbol>,
+) {
+    let (Some(object), Some(name)) = (string_lit(expr, ids[0]), string_lit(expr, ids[1])) else {
+        return;
+    };
+    let Some(def) = jmcdata::generated::get_action_def(object.as_str(), name.as_str()) else {
+        return;
+    };
+    if def.id.starts_with("if_") || def.boolean {
+        return;
+    }
+    let Some(&args_id) = ids.get(3) else {
+        return;
+    };
+    let Hir::List(arg_ids) = &expr[args_id] else {
+        return;
+    };
+    let mut used_params = std::collections::HashSet::new();
+    let mut positional_idx = 0;
+    for &arg_id in arg_ids {
+        let (arg_name, val_id) = match &expr[arg_id] {
+            Hir::Named([n, v]) => (string_lit(expr, *n).map(|s| s.to_string()), *v),
+            _ => (None, arg_id),
+        };
+        let target_arg = crate::utils::resolve_action_arg_def(
+            arg_name.as_deref(),
+            Some(def),
+            &mut used_params,
+            &mut positional_idx,
+        );
+        if let Some(arg) = target_arg
+            && arg.arg_type == "variable"
+            && let Some(var) = get_target_var_name(expr, val_id)
+        {
+            out.insert(var);
+        }
+    }
 }

@@ -48,6 +48,14 @@ fn try_complete_scoped(doc: &DocumentData, trimmed: &str) -> Option<Vec<Completi
                 {
                     return Some(complete_enum_variants(enum_info));
                 }
+
+                if let Some(ir_ctx) = &doc.ir_ctx
+                    && let Some(ast) = &doc.ast
+                    && let Some(def_id) = ir_ctx.classes_by_name.get(ident)
+                    && let Some(class_info) = ir_ctx.classes_by_def.get(def_id)
+                {
+                    return Some(collect_class_members(ast, ir_ctx, class_info));
+                }
             }
         }
     }
@@ -62,7 +70,7 @@ pub fn provide_completions(doc: &DocumentData, params: &CompletionParams) -> Vec
     let text = &doc.text;
     let pos = params.text_document_position.position;
 
-    // Find current line text up to cursor position
+    // Find current line text up to cursor position (UTF-16 safe)
     let line_text = get_line_prefix(text, pos);
     let trimmed = line_text.trim_end();
 
@@ -82,6 +90,17 @@ pub fn provide_completions(doc: &DocumentData, params: &CompletionParams) -> Vec
                 .unwrap_or("");
 
             if !ident.is_empty() {
+                // Check if it's a JustMC built-in object (e.g. player.send_message)
+                if let Some(canonical) = canonicalize_object(ident) {
+                    if canonical == "value" {
+                        return complete_justmc_game_values(ident, doc.lang);
+                    }
+                    if canonical == "event" {
+                        return complete_justmc_events(doc.lang);
+                    }
+                    return complete_justmc_actions(canonical, ident, doc.lang);
+                }
+
                 // Check if it's an enum (e.g. MessageType.TEXT)
                 if let Some(ir_ctx) = &doc.ir_ctx
                     && let Some(def_id) = ir_ctx.enums_by_name.get(ident)
@@ -90,7 +109,16 @@ pub fn provide_completions(doc: &DocumentData, params: &CompletionParams) -> Vec
                     return complete_enum_variants(enum_info);
                 }
 
-                if let Some(methods) = complete_class_members_by_var_name(doc, ident) {
+                // Check if it's a class directly (e.g. MyClass.some_method)
+                if let Some(ir_ctx) = &doc.ir_ctx
+                    && let Some(ast) = &doc.ast
+                    && let Some(def_id) = ir_ctx.classes_by_name.get(ident)
+                    && let Some(class_info) = ir_ctx.classes_by_def.get(def_id)
+                {
+                    return collect_class_members(ast, ir_ctx, class_info);
+                }
+
+                if let Some(methods) = complete_class_members_by_var_name(doc, ident, pos) {
                     return methods;
                 }
             }
@@ -149,6 +177,9 @@ pub fn provide_completions(doc: &DocumentData, params: &CompletionParams) -> Vec
 
     if let Some(ast) = &doc.ast {
         items.extend(local_variable_completions(ast, text, pos));
+    } else {
+        // Fallback: extract identifier tokens from text so autocomplete isn't empty when syntax is broken
+        items.extend(text_fallback_completions(text));
     }
 
     items
@@ -157,8 +188,16 @@ pub fn provide_completions(doc: &DocumentData, params: &CompletionParams) -> Vec
 fn get_line_prefix(text: &str, pos: Position) -> String {
     for (current_line, line) in text.split('\n').enumerate() {
         if current_line as u32 == pos.line {
-            let col = (pos.character as usize).min(line.len());
-            return line[..col].trim_end_matches('\r').to_string();
+            let clean_line = line.trim_end_matches('\r');
+            let mut utf16_count = 0;
+            let target_utf16 = pos.character as usize;
+            for (idx, ch) in clean_line.char_indices() {
+                if utf16_count >= target_utf16 {
+                    return clean_line[..idx].to_string();
+                }
+                utf16_count += ch.len_utf16();
+            }
+            return clean_line.to_string();
         }
     }
     String::new()
@@ -424,30 +463,151 @@ fn complete_enum_variants(info: &jmcc::ir::ctx::EnumInfo) -> Vec<CompletionItem>
 fn complete_class_members_by_var_name(
     doc: &DocumentData,
     var_name: &str,
+    pos: Position,
 ) -> Option<Vec<CompletionItem>> {
     let ir_ctx = doc.ir_ctx.as_ref()?;
     let ast = doc.ast.as_ref()?;
 
-    // Search for var type in VarDecl or Function parameters
-    let mut found_type_name = None;
-    for stmt in &ast.statements {
-        if let Statement::VarDecl(v) = stmt {
-            for (i, name) in v.names.iter().enumerate() {
-                let name_str = jmcc::ast::text_value_to_string(ast, name);
-                if name_str == var_name
-                    && let Some(Some(ty_id)) = v.tys.get(i)
+    // 1. Check if var_name is `self`, `this`, or `это`
+    if (var_name == "self" || var_name == "this" || var_name == "это")
+        && let Some(index) = ast.line_indexes.get(&doc.path)
+        && let Some(offset) = super::diagnostics::position_to_offset(index, pos)
+    {
+        for stmt in &ast.statements {
+            if let Statement::Class(c) = stmt
+                && c.span.contains(&offset)
+            {
+                let class_name = ast.strings.resolve(&c.name);
+                if let Some(def_id) = ir_ctx.classes_by_name.get(class_name)
+                    && let Some(class_info) = ir_ctx.classes_by_def.get(def_id)
                 {
-                    found_type_name = Some(ast.strings.resolve(ty_id).to_owned());
+                    return Some(collect_class_members(ast, ir_ctx, class_info));
                 }
             }
         }
     }
 
-    let type_name = found_type_name?;
-    let def_id = ir_ctx.classes_by_name.get(&type_name)?;
-    let class_info = ir_ctx.classes_by_def.get(def_id)?;
+    // 2. Search for var type across all statements (VarDecl, Function, Process, Class methods)
+    let mut found_type_name = None;
+    let mut found_class_def_id = None;
+
+    walk_statements(&ast.statements, &mut |stmt| {
+        if found_type_name.is_some() || found_class_def_id.is_some() {
+            return;
+        }
+
+        match stmt {
+            Statement::VarDecl(v) => {
+                for (i, name) in v.names.iter().enumerate() {
+                    let name_str = jmcc::ast::text_value_to_string(ast, name);
+                    if name_str == var_name {
+                        if let Some(Some(ty_id)) = v.tys.get(i) {
+                            found_type_name = Some(ast.strings.resolve(ty_id).to_owned());
+                            return;
+                        }
+                        if let Some(val_id) = v.value {
+                            if let Some(jmcc::ast::semantic::Type::Class(def_id, _)) =
+                                doc.expr_types.get(&val_id)
+                            {
+                                found_class_def_id = Some(*def_id);
+                                return;
+                            }
+                            if let Expr::Constructor(c) = &ast.exprs[val_id] {
+                                found_type_name = Some(ast.strings.resolve(&c.name).to_owned());
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            Statement::Function(f) => {
+                for p in &f.params {
+                    let p_name = ast.strings.resolve(&p.name);
+                    if p_name == var_name
+                        && let Some(ty_id) = p.ty
+                    {
+                        found_type_name = Some(ast.strings.resolve(&ty_id).to_owned());
+                        return;
+                    }
+                }
+            }
+            Statement::Process(p) => {
+                for param in &p.params {
+                    let p_name = ast.strings.resolve(&param.name);
+                    if p_name == var_name
+                        && let Some(ty_id) = param.ty
+                    {
+                        found_type_name = Some(ast.strings.resolve(&ty_id).to_owned());
+                        return;
+                    }
+                }
+            }
+            Statement::Class(c) => {
+                for inner_stmt in &c.body {
+                    if let Statement::Function(m) = inner_stmt {
+                        for p in &m.params {
+                            let p_name = ast.strings.resolve(&p.name);
+                            if p_name == var_name
+                                && let Some(ty_id) = p.ty
+                            {
+                                found_type_name = Some(ast.strings.resolve(&ty_id).to_owned());
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    });
+
+    let class_info = if let Some(def_id) = found_class_def_id {
+        ir_ctx.classes_by_def.get(&def_id)?
+    } else {
+        let type_name = found_type_name?;
+        let def_id = ir_ctx.classes_by_name.get(&type_name)?;
+        ir_ctx.classes_by_def.get(def_id)?
+    };
 
     Some(collect_class_members(ast, ir_ctx, class_info))
+}
+
+fn text_fallback_completions(text: &str) -> Vec<CompletionItem> {
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+
+    let mut current_word = String::new();
+    for ch in text.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            current_word.push(ch);
+        } else {
+            if current_word.len() >= 2
+                && !current_word.starts_with(|c: char| c.is_ascii_digit())
+                && seen.insert(current_word.clone())
+            {
+                items.push(CompletionItem {
+                    label: current_word.clone(),
+                    kind: Some(CompletionItemKind::TEXT),
+                    detail: Some("Текст / идентификатор".to_owned()),
+                    ..Default::default()
+                });
+            }
+            current_word.clear();
+        }
+    }
+    if current_word.len() >= 2
+        && !current_word.starts_with(|c: char| c.is_ascii_digit())
+        && seen.insert(current_word.clone())
+    {
+        items.push(CompletionItem {
+            label: current_word,
+            kind: Some(CompletionItemKind::TEXT),
+            detail: Some("Текст / идентификатор".to_owned()),
+            ..Default::default()
+        });
+    }
+
+    items
 }
 
 fn collect_class_members(ast: &Ast, ir_ctx: &IrCtx, info: &ClassInfo) -> Vec<CompletionItem> {
@@ -990,6 +1150,51 @@ fn keyword_completions(lang: Lang) -> Vec<CompletionItem> {
             "встраиваемый",
             "встраиваемый ",
             desc(is_ru, "Встраиваемая функция", "Inline function modifier"),
+        ),
+        (
+            "cached",
+            "cached ",
+            desc(
+                is_ru,
+                "Кэшированный класс или поле",
+                "Cached class or field modifier",
+            ),
+        ),
+        (
+            "кэшированный",
+            "кэшированный ",
+            desc(
+                is_ru,
+                "Кэшированный класс или поле",
+                "Cached class or field modifier",
+            ),
+        ),
+        (
+            "кешированный",
+            "кешированный ",
+            desc(
+                is_ru,
+                "Кэшированный класс или поле",
+                "Cached class or field modifier",
+            ),
+        ),
+        (
+            "кэш",
+            "кэш ",
+            desc(
+                is_ru,
+                "Кэшированный класс или поле",
+                "Cached class or field modifier",
+            ),
+        ),
+        (
+            "кеш",
+            "кеш ",
+            desc(
+                is_ru,
+                "Кэшированный класс или поле",
+                "Cached class or field modifier",
+            ),
         ),
         (
             "local",

@@ -78,6 +78,18 @@ pub enum ScenarioStep {
         /// Заголовок инвентаря (`open_inventory_title`).
         #[serde(default)]
         title: Option<String>,
+        /// Начальная позиция (`event_from_location`).
+        #[serde(default)]
+        from: Option<[f64; 3]>,
+        /// Новая позиция (`event_new_location`).
+        #[serde(default)]
+        to: Option<[f64; 3]>,
+        /// Флаг нахождения на земле (`if_player_is_on_ground`).
+        #[serde(default)]
+        on_ground: Option<bool>,
+        /// Причина урона (`event_damage_cause`).
+        #[serde(default)]
+        damage_cause: Option<String>,
     },
 
     /// Прямой вызов функции модуля.
@@ -211,6 +223,10 @@ fn execute_step(runtime: &mut Runtime<'_>, step: &ScenarioStep, step_num: usize)
             chat,
             slot,
             title,
+            from,
+            to,
+            on_ground,
+            damage_cause,
         } => {
             execute_event(
                 runtime,
@@ -220,6 +236,10 @@ fn execute_step(runtime: &mut Runtime<'_>, step: &ScenarioStep, step_num: usize)
                 chat.as_deref(),
                 *slot,
                 title.as_deref(),
+                *from,
+                *to,
+                *on_ground,
+                damage_cause.as_deref(),
             )?;
         }
 
@@ -257,6 +277,10 @@ fn execute_step(runtime: &mut Runtime<'_>, step: &ScenarioStep, step_num: usize)
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "scenario event requires multiple optional properties"
+)]
 fn execute_event(
     runtime: &mut Runtime<'_>,
     step_num: usize,
@@ -265,15 +289,19 @@ fn execute_event(
     chat: Option<&str>,
     slot: Option<f64>,
     title: Option<&str>,
+    from: Option<[f64; 3]>,
+    to: Option<[f64; 3]>,
+    on_ground: Option<bool>,
+    damage_cause: Option<&str>,
 ) -> Result<()> {
-    let targets = if let Some(player_name) = player {
+    let (targets, player_idx) = if let Some(player_name) = player {
         if let Some(pos) = runtime
             .world()
             .players()
             .iter()
             .position(|p| p.name == player_name)
         {
-            vec![Target::Player(pos)]
+            (vec![Target::Player(pos)], Some(pos))
         } else {
             return Err(RuntimeError::AssertionFailed {
                 step: step_num,
@@ -281,14 +309,33 @@ fn execute_event(
             });
         }
     } else {
-        Vec::new()
+        (Vec::new(), None)
     };
+
+    if let (Some(idx), Some(ground)) = (player_idx, on_ground)
+        && let Some(p) = runtime.world_mut().player_mut(idx)
+    {
+        p.is_on_ground = ground;
+    }
+
+    let from_location = from.map(|[x, y, z]| Position::coords(x, y, z)).or_else(|| {
+        let idx = player_idx?;
+        runtime.world().players().get(idx).map(|p| p.position)
+    });
+
+    let to_location = to.map(|[x, y, z]| Position::coords(x, y, z)).or_else(|| {
+        let idx = player_idx?;
+        runtime.world().players().get(idx).map(|p| p.position)
+    });
 
     let event_data = EventData {
         targets,
         chat_message: chat.map(str::to_owned),
         slot,
         inventory_title: title.map(str::to_owned),
+        from_location,
+        to_location,
+        damage_cause: damage_cause.map(str::to_owned),
         ..EventData::default()
     };
 
@@ -300,7 +347,16 @@ fn execute_event(
         "Firing scenario event"
     );
 
-    runtime.fire_event_with(event, event_data)
+    let res = runtime.fire_event_with(event, event_data);
+
+    if let (Some(idx), Some(to_pos)) = (player_idx, to_location)
+        && !runtime.world().is_event_cancelled()
+        && let Some(p) = runtime.world_mut().player_mut(idx)
+    {
+        p.position = to_pos;
+    }
+
+    res
 }
 
 fn execute_assert_log(
@@ -328,7 +384,7 @@ fn execute_assert_log(
 
     if let Some(unexpected) = not_contains {
         let found = entries.iter().any(|entry| entry.contains(unexpected));
-        if !found {
+        if found {
             return Err(RuntimeError::AssertionFailed {
                 step: step_num,
                 message: format!(

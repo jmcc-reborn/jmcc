@@ -69,11 +69,29 @@ export inline function cos(x: number) -> number {
 }
 
 /// RU:
-/// Округляет `x` до `n` знаков после запятой.
+/// Вычисляет тангенс угла в радианах.
 /// EN:
-/// Rounds `x` to `n` decimal places using standard rounding.
+/// Computes the tangent of an angle given in radians.
+@alias("тангенс")
+export inline function tan(x: number) -> number {
+    return variable::tangent(x, variant = "TANGENT", input = "RADIANS");
+}
+
+/// RU:
+/// Ограничивает число `x` диапазоном [min, max].
+/// EN:
+/// Clamps `x` to the range [min, max].
+@alias("ограничить")
+export inline function clamp(x: number, min: number, max: number) -> number {
+    return variable::clamp(x, min, max);
+}
+
+/// RU:
+/// Округляет `x` до `n` знаков после запятой (по умолчанию 0).
+/// EN:
+/// Rounds `x` to `n` decimal places (default 0).
 @alias("округлить")
-export inline function round(x: number, n: number) -> number {
+export inline function round(x: number, n: number = 0) -> number {
     return variable::round(x, n, round_type = "ROUND");
 }
 

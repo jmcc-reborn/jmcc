@@ -47,10 +47,15 @@ impl HirBuilder<'_> {
             Statement::Import(_) | Statement::TypeAlias(_) | Statement::Interface(_) => {
                 Ok(self.nop())
             }
+            Statement::Cfg(_, inner) => self.conv_stmt(inner),
         }
     }
 
     #[instrument(skip(self, d), level = "trace")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "lowering variable declarations with destructuring and scope handling"
+    )]
     fn conv_var_decl(&mut self, d: &VarDecl) -> Result<Id, IrError> {
         let mut stmts = Vec::new();
 
@@ -72,8 +77,9 @@ impl HirBuilder<'_> {
                 }
             } else if let Some(Some(ty_id)) = d.tys.first() {
                 let ty_str = self.ast.strings.resolve(ty_id);
-                let ty = self.parse_decl_type_str(ty_str)?;
-                self.ir_ctx.record_var_type(sym, ty);
+                if let Ok(ty) = self.parse_decl_type_str(ty_str) {
+                    self.ir_ctx.record_var_type(sym, ty);
+                }
             }
 
             if scope == VarScope::Inline {
@@ -89,6 +95,9 @@ impl HirBuilder<'_> {
             let nid = self.wrap_scope(nid_raw, scope);
             let vd = self.add(Hir::VarDecl([nid, val]));
             stmts.push(vd);
+            if has_value {
+                self.preload_var_cached_fields(sym, &mut stmts);
+            }
         } else {
             // `var a, b = action()`: binds the action's output slots, not array elements.
             if has_value
@@ -101,8 +110,9 @@ impl HirBuilder<'_> {
 
                     if let Some(Some(ty_id)) = d.tys.get(i) {
                         let ty_str = self.ast.strings.resolve(ty_id);
-                        let ty = self.parse_decl_type_str(ty_str)?;
-                        self.ir_ctx.record_var_type(sym, ty);
+                        if let Ok(ty) = self.parse_decl_type_str(ty_str) {
+                            self.ir_ctx.record_var_type(sym, ty);
+                        }
                     }
 
                     if scope == VarScope::Inline {
@@ -115,6 +125,7 @@ impl HirBuilder<'_> {
                     let nid = self.wrap_scope(nid_raw, scope);
                     let vd = self.add(Hir::VarDecl([nid, temps[i]]));
                     stmts.push(vd);
+                    self.preload_var_cached_fields(sym, &mut stmts);
                 }
             } else if has_value {
                 let temp_name = self.fresh();
@@ -128,13 +139,13 @@ impl HirBuilder<'_> {
 
                     if let Some(Some(ty_id)) = d.tys.get(i) {
                         let ty_str = self.ast.strings.resolve(ty_id);
-                        let ty = self.parse_decl_type_str(ty_str)?;
-                        self.ir_ctx.record_var_type(sym, ty);
+                        if let Ok(ty) = self.parse_decl_type_str(ty_str) {
+                            self.ir_ctx.record_var_type(sym, ty);
+                        }
                     }
 
                     let index_id = self.add(Hir::Num(OrderedFloat(i as f64)));
-                    let args = self.add(Hir::List(vec![temp_var, index_id].into_boxed_slice()));
-                    let act = self.action("variable", Symbol::from("get_list_value"), args);
+                    let act = self.add(Hir::Index([temp_var, index_id]));
 
                     if scope == VarScope::Inline {
                         self.inline_vars_mut().insert(sym, act);
@@ -146,6 +157,7 @@ impl HirBuilder<'_> {
                     let nid = self.wrap_scope(nid_raw, scope);
                     let vd = self.add(Hir::VarDecl([nid, act]));
                     stmts.push(vd);
+                    self.preload_var_cached_fields(sym, &mut stmts);
                 }
             } else {
                 for (i, name) in d.names.iter().enumerate() {
@@ -200,6 +212,10 @@ impl HirBuilder<'_> {
                     }
                     let tgt = self.conv_expr(target)?;
                     stmts.push(self.add(Hir::Set([tgt, op_id])));
+                    if let Some(target_var) = self.get_expr_target_var(target) {
+                        self.cached_field_vars
+                            .retain(|(obj, _), _| *obj != target_var);
+                    }
                 }
                 let block = self.block_or_single(stmts);
                 return Ok(self.wrap_lets(block, b));
@@ -220,6 +236,10 @@ impl HirBuilder<'_> {
             for (&target, &temp) in a.targets.iter().zip(&temps) {
                 let tgt = self.conv_expr(target)?;
                 stmts.push(self.add(Hir::Set([tgt, temp])));
+                if let Some(target_var) = self.get_expr_target_var(target) {
+                    self.cached_field_vars
+                        .retain(|(obj, _), _| *obj != target_var);
+                }
             }
             let block = self.block_or_single(stmts);
             return Ok(self.wrap_lets(block, b));
@@ -237,6 +257,10 @@ impl HirBuilder<'_> {
             }
             let tgt = self.conv_expr(target)?;
             stmts.push(self.add(Hir::Set([tgt, val])));
+            if let Some(target_var) = self.get_expr_target_var(target) {
+                self.cached_field_vars
+                    .retain(|(obj, _), _| *obj != target_var);
+            }
         }
         let block = self.block_or_single(stmts);
         Ok(self.wrap_lets(block, b))
@@ -265,6 +289,7 @@ impl HirBuilder<'_> {
     #[instrument(skip(self, i), level = "trace")]
     fn conv_if(&mut self, i: &IfStmt) -> Result<Id, IrError> {
         let (cond, mut b) = self.conv_condition(i.condition)?;
+        self.branch_depth += 1;
         let then_body = self.convert_block_inner(&i.then_body)?;
         let mut else_body = match &i.else_body {
             Some(eb) => self.convert_block_inner(eb)?,
@@ -276,12 +301,8 @@ impl HirBuilder<'_> {
             let eb_body = self.convert_block_inner(ebody)?;
             else_body = self.add(Hir::If([ec_atom, eb_body, else_body]));
         }
-        let cond_final = if i.is_not {
-            self.add(Hir::Not(cond))
-        } else {
-            cond
-        };
-        let node = self.add(Hir::If([cond_final, then_body, else_body]));
+        self.branch_depth -= 1;
+        let node = self.add(Hir::If([cond, then_body, else_body]));
         Ok(self.wrap_lets(node, b))
     }
 
@@ -299,11 +320,13 @@ impl HirBuilder<'_> {
 
     fn lower_match_arms(&mut self, scrutinee: Id, arms: &[MatchArm]) -> Result<Id, IrError> {
         let mut else_body = self.nop();
+        self.branch_depth += 1;
         for arm in arms.iter().rev() {
             let body = self.convert_block_inner(&arm.body)?;
             let cond = self.arm_condition(scrutinee, arm)?;
             else_body = self.add(Hir::If([cond, body, else_body]));
         }
+        self.branch_depth -= 1;
         Ok(else_body)
     }
 
@@ -467,10 +490,7 @@ impl HirBuilder<'_> {
     }
 
     fn conv_while(&mut self, w: &WhileStmt) -> Result<Id, IrError> {
-        let mut cond = self.conv_expr(w.condition)?;
-        if w.is_not {
-            cond = self.add(Hir::Not(cond));
-        }
+        let cond = self.conv_expr(w.condition)?;
 
         let label_sym = w.label.map(|l| self.sym(l));
         self.loop_stack.push(LoopCtx {
@@ -479,7 +499,9 @@ impl HirBuilder<'_> {
             outer_flags_checked: Vec::new(),
         });
 
+        self.branch_depth += 1;
         let body = self.convert_block_inner(&w.body)?;
+        self.branch_depth -= 1;
         let loop_ctx = self.loop_stack.pop().unwrap();
 
         let while_node = self.add(Hir::While([cond, body]));
@@ -830,11 +852,13 @@ impl HirBuilder<'_> {
             named_args.push(self.add(Hir::Named([list_arg_name, iterable_id])));
         }
 
+        self.branch_depth += 1;
         let mut body_ids: Vec<Id> = f
             .body
             .iter()
             .map(|s| self.conv_stmt(s))
             .collect::<Result<_, _>>()?;
+        self.branch_depth -= 1;
         if let Some((idx_var, _)) = range_index_info {
             let one = self.add(Hir::Num(OrderedFloat(1.0)));
             let next_idx = self.add(Hir::Add([idx_var, one]));

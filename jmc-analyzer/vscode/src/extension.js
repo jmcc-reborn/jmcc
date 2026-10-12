@@ -36,10 +36,11 @@ const legend = new vscode.SemanticTokensLegend(TOKEN_TYPES, TOKEN_MODIFIERS);
  * Built-in zero-dependency LSP client over stdio.
  */
 class BuiltinLspClient {
-  constructor(serverPath, outputChannel, stdPath) {
+  constructor(serverPath, outputChannel, stdPath, logFile) {
     this.serverPath = serverPath;
     this.output = outputChannel;
     this.stdPath = stdPath || null;
+    this.logFile = logFile || null;
     this.process = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -54,6 +55,9 @@ class BuiltinLspClient {
         const args = ["lsp"];
         if (this.stdPath) {
           args.push("--std-path", this.stdPath);
+        }
+        if (this.logFile) {
+          args.push("--log-file", this.logFile);
         }
         const env = { ...process.env };
         if (this.stdPath) {
@@ -84,6 +88,21 @@ class BuiltinLspClient {
         this.output.appendLine(
           `[jmc-analyzer] Server process exited with code ${code}, signal ${signal}`
         );
+        if (code !== 0 && code !== null) {
+          vscode.window
+            .showErrorMessage(
+              `Языковой сервер JMC Analyzer аварийно завершился (код ${code}).`,
+              "Показать логи",
+              "Перезапустить сервер"
+            )
+            .then((action) => {
+              if (action === "Показать логи") {
+                this.output.show();
+              } else if (action === "Перезапустить сервер") {
+                vscode.commands.executeCommand("jmc.analyzer.restartServer");
+              }
+            });
+        }
       });
 
       // Send initialize
@@ -188,6 +207,32 @@ class BuiltinLspClient {
 
     if (msg.method === "textDocument/publishDiagnostics") {
       this.handleDiagnostics(msg.params);
+      return;
+    }
+
+    if (msg.method === "window/logMessage") {
+      const typ = msg.params ? msg.params.type : 3;
+      const text = msg.params ? msg.params.message : "";
+      const prefix = typ === 1 ? "[ERROR]" : typ === 2 ? "[WARN]" : "[INFO]";
+      this.output.appendLine(`[jmc-analyzer ${prefix}] ${text}`);
+      return;
+    }
+
+    if (msg.method === "window/showMessage") {
+      const typ = msg.params ? msg.params.type : 3;
+      const text = msg.params ? msg.params.message : "";
+      if (typ === 1) {
+        vscode.window
+          .showErrorMessage(`JMC Analyzer: ${text}`, "Показать логи")
+          .then((act) => {
+            if (act === "Показать логи") this.output.show();
+          });
+      } else if (typ === 2) {
+        vscode.window.showWarningMessage(`JMC Analyzer: ${text}`);
+      } else {
+        vscode.window.showInformationMessage(`JMC Analyzer: ${text}`);
+      }
+      return;
     }
   }
 
@@ -1088,9 +1133,18 @@ async function startServer(context, output) {
     LanguageClient = null;
   }
 
+  const configuredLogFile = config.get("logFile") || "";
+  const effectiveLogFile = configuredLogFile.trim() !== ""
+    ? configuredLogFile.trim()
+    : path.join(os.tmpdir(), "jmc-analyzer.log");
+
   const lspArgs = ["lsp"];
   if (effectiveStdPath) {
     lspArgs.push("--std-path", effectiveStdPath);
+  }
+  if (effectiveLogFile) {
+    lspArgs.push("--log-file", effectiveLogFile);
+    output.appendLine(`[jmc-analyzer] Log file: ${effectiveLogFile}`);
   }
   const lspEnv = { ...process.env };
   if (effectiveStdPath) {
@@ -1116,7 +1170,7 @@ async function startServer(context, output) {
     await client.start();
   } else {
     output.appendLine(`Using built-in zero-dependency LSP client with '${serverPath}'`);
-    const builtin = new BuiltinLspClient(serverPath, output, effectiveStdPath);
+    const builtin = new BuiltinLspClient(serverPath, output, effectiveStdPath, effectiveLogFile);
     client = builtin;
     try {
       await builtin.start();
@@ -1136,6 +1190,9 @@ async function activate(context) {
   context.subscriptions.push(output);
 
   context.subscriptions.push(
+    vscode.commands.registerCommand("jmc.analyzer.showLogs", () => {
+      output.show();
+    }),
     vscode.commands.registerCommand("jmc.analyzer.restartServer", async () => {
       output.appendLine("[jmc-analyzer] Restarting language server...");
       await startServer(context, output);

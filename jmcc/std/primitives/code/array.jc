@@ -110,7 +110,8 @@ export class array<T> implements Iterable<T> {
     /// Appends an element to the end of the array.
     @alias("добавить")
     inline function append(self: array<T>, value: T) -> array<T> {
-        return variable::append_list(self, [value]);
+        variable::append_value(self, value);
+        return self;
     }
 
     /// RU:
@@ -119,7 +120,8 @@ export class array<T> implements Iterable<T> {
     /// Pushes an element to the end of the array.
     @alias("вставить")
     inline function push(self: array<T>, value: T) -> array<T> {
-        return variable::append_list(self, [value]);
+        variable::append_value(self, value);
+        return self;
     }
 
     /// RU:
@@ -132,6 +134,35 @@ export class array<T> implements Iterable<T> {
         var val: T;
         variable::remove_list_value_at_index(val, self, self, last_idx);
         return val;
+    }
+
+    /// RU:
+    /// Вставляет элемент в массив по указанному индексу.
+    /// EN:
+    /// Inserts an element into the array at the specified index.
+    @alias("вставить_по_индексу")
+    inline function insert(self: array<T>, index: number, value: T) -> array<T> {
+        return variable::insert_list_value(self, index, value);
+    }
+
+    /// RU:
+    /// Удаляет элемент из массива по значению.
+    /// EN:
+    /// Removes an element from the array by value.
+    @alias("удалить")
+    inline function remove(self: array<T>, value: T, mode: text = "FIRST") -> array<T> {
+        return variable::remove_list_value(self, value, remove_mode = mode);
+    }
+
+    /// RU:
+    /// Удаляет элемент из массива по индексу.
+    /// EN:
+    /// Removes an element from the array by index.
+    @alias("удалить_по_индексу")
+    inline function remove_at(self: array<T>, index: number) -> array<T> {
+        var removed: T;
+        variable::remove_list_value_at_index(removed, self, self, index);
+        return self;
     }
 
     /// RU:
@@ -226,6 +257,21 @@ export class array<T> implements Iterable<T> {
     @alias("случайный")
     inline function random(self: array<T>) -> T {
         return variable::get_list_random_value(self);
+    }
+
+    /// RU:
+    /// Объединяет элементы массива в строку с указанным разделителем.
+    /// EN:
+    /// Joins elements of the array into a string using the separator.
+    @alias("соединить")
+    @alias("объединить")
+    inline function join(
+        self: array<T>,
+        separator: text = "",
+        prefix: text = "",
+        postfix: text = "",
+    ) -> text {
+        return variable::join_text(self, separator, prefix, postfix);
     }
 
     /// RU:

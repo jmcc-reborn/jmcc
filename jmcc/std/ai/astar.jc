@@ -49,8 +49,8 @@ export class AStar {
         allow_diagonal: boolean = false,
     ) -> AStar {
         self.grid = grid;
-        self.rows = variable::get_list_length(grid);
-        self.cols = variable::get_list_length(grid[0]);
+        self.rows = grid.len();
+        self.cols = grid[0].len();
         self.allow_diagonal = allow_diagonal;
         return self;
     }
@@ -61,10 +61,10 @@ export class AStar {
     /// Calculates the estimated distance between two points.
     @alias("эвристика")
     function heuristic(self: AStar, x1: number, y1: number, x2: number, y2: number) -> number {
-        var dx = variable::absolute(x1 - x2);
-        var dy = variable::absolute(y1 - y2);
+        var dx = abs(x1 - x2);
+        var dy = abs(y1 - y2);
         if self.allow_diagonal {
-            return variable::max([dx, dy]) + (variable::root(2, 2) - 1) * variable::min([dx, dy]);
+            return variable::max([dx, dy]) + (sqrt(2) - 1) * variable::min([dx, dy]);
         }
         // Manhattan distance
         return dx + dy;
@@ -96,7 +96,7 @@ export class AStar {
         end_x: number,
         end_y: number,
     ) -> array<array<number>> {
-        if not self.is_walkable(start_x, start_y) and self.is_walkable(end_x, end_y) {
+        if not self.is_walkable(start_x, start_y) or not self.is_walkable(end_x, end_y) {
             return [];
         }
 
@@ -117,7 +117,7 @@ export class AStar {
             dirs = [[-1, 0], [1, 0], [0, -1], [0, 1]];
         }
 
-        while variable::get_map_size(open_map) > 0 {
+        while open_map.len() > 0 {
             var current_node: Node = Node(0, 0);
             var current_key: text = "";
             var min_f = 9999999;
@@ -141,11 +141,10 @@ export class AStar {
                     }
                     current = current.parent as Node;
                 }
-                return variable::reverse_list(path);
+                return path.reverse();
             }
 
-            var temp: any = 0;
-            open_map = variable::remove_map_entry(temp, open_map, current_key);
+            open_map.remove(current_key);
             closed_map["${current_node.x}:${current_node.y}"] = true;
 
             for dir in dirs {
@@ -159,7 +158,7 @@ export class AStar {
 
                     var d = 1;
                     if dir[0] != 0 and dir[1] != 0 {
-                        d = variable::root(2, 2);
+                        d = sqrt(2);
                     }
                     child.g = current_node.g + d;
                     child.h = self.heuristic(next_x, next_y, end_x, end_y);

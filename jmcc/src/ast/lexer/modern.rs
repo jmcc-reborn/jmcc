@@ -16,6 +16,7 @@ pub fn keyword(s: &str) -> Option<Token<'static>> {
         "class" => Some(Token::Class),
         "enum" => Some(Token::Enum),
         "inline" => Some(Token::Inline),
+        "cached" => Some(Token::Cached),
         "local" => Some(Token::Local),
         "game" => Some(Token::Game),
         "save" => Some(Token::Save),

@@ -57,6 +57,7 @@ impl Analyzer<'_> {
         if name == "_" {
             return Type::Unknown;
         }
+        self.mark_var_used(&name);
         match self.lookup(&name) {
             Some(Symbol::Var { ty, .. } | Symbol::Param { ty }) => ty,
             Some(Symbol::Func { .. }) => Type::Unknown,
@@ -82,6 +83,12 @@ impl Analyzer<'_> {
             }
         }
         let name = text_value_to_string(self.ast, &variable.name);
+        self.mark_var_used(&name);
+        if (has_interp || name.contains('%'))
+            && let Some(dyn_flag) = self.callable_has_dynamic.last_mut()
+        {
+            *dyn_flag = true;
+        }
         match self.lookup(&name) {
             Some(Symbol::Var { ty, .. } | Symbol::Param { ty }) => ty,
             Some(Symbol::Func { .. }) => Type::Unknown,

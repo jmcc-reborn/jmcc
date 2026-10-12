@@ -32,6 +32,8 @@ RUST_LOG=warn cargo run -p jmcc -- format jmcc/tests/case2.jc
 | `--target <justmc>` | Compilation target (default: `justmc`) |
 | `--edition <2023\|2026>` | Language edition, default `2026` |
 | `--emit <ast,hir,mir,json>` | Files emitted to disk; defaults to all four |
+| `--debug-time [true\|false]` | Measure execution time per handler (`true` in `dev`, `false` in `release`) |
+| `--minify [true\|false]` | Minify output JSON module (`false` in `dev`, `true` in `release`) |
 
 `--emit` controls artifact emission. If `json` is omitted, code generation is skipped.
 

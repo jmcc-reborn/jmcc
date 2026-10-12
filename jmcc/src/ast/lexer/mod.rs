@@ -22,6 +22,7 @@ pub enum Token<'a> {
     Class,
     Enum,
     Inline,
+    Cached,
     Local,
     Game,
     Save,

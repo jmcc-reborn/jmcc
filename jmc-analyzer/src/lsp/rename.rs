@@ -48,6 +48,7 @@ fn is_reserved_keyword(word: &str) -> bool {
             | "throw"
             | "ref"
             | "inline"
+            | "cached"
             | "функция"
             | "процесс"
             | "событие"
@@ -72,6 +73,10 @@ fn is_reserved_keyword(word: &str) -> bool {
             | "правда"
             | "ложь"
             | "пусто"
+            | "кэшированный"
+            | "кешированный"
+            | "кэш"
+            | "кеш"
     )
 }
 

@@ -97,6 +97,7 @@ pub struct CodeGen {
     pub(crate) edition: u16,
     pub(crate) var_aliases: std::collections::HashMap<String, Value<'static>>,
     pub disable_action_limit: bool,
+    pub debug_time: bool,
     func_split_counter: usize,
     idx: usize,
 }
@@ -119,6 +120,7 @@ impl CodeGen {
             edition,
             var_aliases: std::collections::HashMap::new(),
             disable_action_limit: false,
+            debug_time: true,
             func_split_counter: 0,
             idx: 0,
         }
@@ -220,27 +222,29 @@ impl CodeGen {
         });
 
         for (pos, line) in &mut self.handlers.iter_mut().enumerate() {
-            let fmt = match &line.line_value {
-                LineValue::Event { event } => format!("{event:?}"),
-                LineValue::Fn { name, .. } => name.to_string(),
-            };
-            let timer = Value::Variable {
-                variable: "t".into(),
-                scope: VariableScope::Line,
-            };
-            line.operations = vec![
-                Op::controller_measure_time(
-                    timer.clone(),
-                    Some(MeasureTimeDuration::Microseconds),
-                    std::mem::take(&mut line.operations),
-                ),
-                Op::player_message(
-                    Value::Array {
-                        values: vec![Some(format!("{fmt} running time:").into()), Some(timer)],
-                    },
-                    None,
-                ),
-            ];
+            if self.debug_time {
+                let fmt = match &line.line_value {
+                    LineValue::Event { event } => format!("{event:?}"),
+                    LineValue::Fn { name, .. } => name.to_string(),
+                };
+                let timer = Value::Variable {
+                    variable: "t".into(),
+                    scope: VariableScope::Line,
+                };
+                line.operations = vec![
+                    Op::controller_measure_time(
+                        timer.clone(),
+                        Some(MeasureTimeDuration::Microseconds),
+                        std::mem::take(&mut line.operations),
+                    ),
+                    Op::player_message(
+                        Value::Array {
+                            values: vec![Some(format!("{fmt} running time:").into()), Some(timer)],
+                        },
+                        None,
+                    ),
+                ];
+            }
             line.position = pos as u16;
         }
 
@@ -348,18 +352,27 @@ impl CodeGen {
         results
     }
 
+    fn extract_line_placeholders_into(text: &str, out: &mut HashSet<String>) {
+        for arg in Self::extract_call_placeholder_arg(text, "%var_line(") {
+            out.insert(arg.to_string());
+            if arg.contains("%var_line(") {
+                Self::extract_line_placeholders_into(arg, out);
+            }
+        }
+    }
+
     fn collect_line_vars_from_value(val: &Value<'_>, out: &mut HashSet<String>) {
         match val {
-            Value::Variable {
-                variable,
-                scope: VariableScope::Line,
-            } => {
-                out.insert(variable.to_string());
+            Value::Variable { variable, scope } => {
+                if *scope == VariableScope::Line {
+                    out.insert(variable.to_string());
+                }
+                if variable.contains("%var_line(") {
+                    Self::extract_line_placeholders_into(variable, out);
+                }
             }
             Value::Text { text, .. } => {
-                for arg in Self::extract_call_placeholder_arg(text, "%var_line(") {
-                    out.insert(arg.to_string());
-                }
+                Self::extract_line_placeholders_into(text, out);
             }
             Value::Array { values } => {
                 for item in values.iter().flatten() {
@@ -367,16 +380,30 @@ impl CodeGen {
                 }
             }
             Value::Map { values } => {
-                for (_k, v) in values.iter() {
+                for (k, v) in values.iter() {
+                    if k.0.contains("%var_line(") {
+                        Self::extract_line_placeholders_into(&k.0, out);
+                    }
                     Self::collect_line_vars_from_value(v, out);
                 }
             }
             Value::Enum {
                 variable: Some(var),
-                scope: Some(VariableScope::Line),
+                scope,
                 ..
             } => {
-                out.insert(var.to_string());
+                if *scope == Some(VariableScope::Line) {
+                    out.insert(var.to_string());
+                }
+                if var.contains("%var_line(") {
+                    Self::extract_line_placeholders_into(var, out);
+                }
+            }
+            Value::Item { item } if item.contains("%var_line(") => {
+                Self::extract_line_placeholders_into(item, out);
+            }
+            Value::Block { block } if block.contains("%var_line(") => {
+                Self::extract_line_placeholders_into(block, out);
             }
             _ => {}
         }
@@ -421,16 +448,18 @@ impl CodeGen {
         for op in &acts[..action_idx] {
             Self::collect_written_line_vars_from_op(op, &mut defined_before);
         }
-        if !defined_before.iter().any(|v| Self::has_placeholder(v)) {
-            return false;
-        }
         let mut referenced_in_remainder = HashSet::new();
         for op in &acts[action_idx..] {
             Self::collect_referenced_line_vars_from_op(op, &mut referenced_in_remainder);
         }
-        referenced_in_remainder
+
+        let def_has_dyn = defined_before.iter().any(|v| Self::has_placeholder(v));
+        let ref_has_dyn = referenced_in_remainder
             .iter()
-            .any(|v| Self::has_placeholder(v))
+            .any(|v| Self::has_placeholder(v));
+
+        (def_has_dyn && !referenced_in_remainder.is_empty())
+            || (ref_has_dyn && !defined_before.is_empty())
     }
 
     fn emit_dynamic_args_warning() {
@@ -674,10 +703,13 @@ impl CodeGen {
             Self::collect_referenced_line_vars_from_op(op, &mut referenced_in_remainder);
         }
 
-        let needs_dyn = defined_before.iter().any(|v| Self::has_placeholder(v))
-            && referenced_in_remainder
-                .iter()
-                .any(|v| Self::has_placeholder(v));
+        let def_has_dyn = defined_before.iter().any(|v| Self::has_placeholder(v));
+        let ref_has_dyn = referenced_in_remainder
+            .iter()
+            .any(|v| Self::has_placeholder(v));
+
+        let needs_dyn = (def_has_dyn && !referenced_in_remainder.is_empty())
+            || (ref_has_dyn && !defined_before.is_empty());
 
         if needs_dyn {
             Self::emit_dynamic_args_warning();
@@ -810,7 +842,7 @@ impl CodeGen {
         self.temp_n += 1;
         Value::Variable {
             variable: Cow::Owned(name),
-            scope: VariableScope::Line,
+            scope: self.default_scope,
         }
     }
 }

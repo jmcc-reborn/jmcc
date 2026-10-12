@@ -49,6 +49,7 @@ impl Analyzer<'_> {
                 self.analyze_expr(*eid);
                 self.statement_context = prev;
             }
+            Statement::Cfg(_, inner) => self.analyze_stmt(inner),
         }
     }
 
@@ -129,6 +130,20 @@ impl Analyzer<'_> {
                     SemanticErrorKind::AlreadyDeclared { name: name.clone() },
                     d.span.clone(),
                 );
+            }
+            if self.callable_depth > 0
+                && !name.starts_with('_')
+                && !name.contains('%')
+                && scope != VarScope::Save
+                && scope != VarScope::Game
+            {
+                self.var_declarations.push(VarDeclRecord {
+                    name: name.clone(),
+                    span: d.span.clone(),
+                    scope,
+                    used: false,
+                    callable_depth: self.callable_depth,
+                });
             }
             self.declare(
                 name,
@@ -303,7 +318,7 @@ impl Analyzer<'_> {
 
     #[instrument(skip(self, r), level = "trace")]
     fn analyze_return(&mut self, r: &ReturnStmt) {
-        if !self.in_function && !self.in_process {
+        if !self.in_function && !self.in_process && self.current_event.is_none() {
             self.error(SemanticErrorKind::ReturnOutsideCallable, r.span.clone());
             return;
         }
@@ -315,8 +330,10 @@ impl Analyzer<'_> {
                         SemanticErrorKind::TypeMismatchReturn { expected, actual }
                     });
                 }
-            } else {
+            } else if self.in_process {
                 self.error(SemanticErrorKind::ReturnFromProcess, r.span.clone());
+            } else {
+                self.error(SemanticErrorKind::ReturnFromEvent, r.span.clone());
             }
         } else if self.in_function && self.function_return_type.is_some() {
             self.error(SemanticErrorKind::MissingReturnValue, r.span.clone());
@@ -369,6 +386,10 @@ impl Analyzer<'_> {
         self.loop_depth += 1;
         self.loop_labels.push(w.label);
 
+        self.check_loop_invariants(&w.body, &[]);
+        if w.body.is_empty() && !self.is_std_span(&w.span) {
+            self.warning(SemanticErrorKind::DeadLoop, w.span.clone());
+        }
         self.analyze_block(&w.body);
 
         self.loop_labels.pop();
@@ -557,6 +578,16 @@ impl Analyzer<'_> {
             );
         }
 
+        let for_var_names: Vec<String> = f
+            .vars
+            .iter()
+            .map(|v| text_value_to_string(self.ast, v))
+            .collect();
+        self.check_loop_invariants(&f.body, &for_var_names);
+        if f.body.is_empty() && !self.is_std_span(&f.span) {
+            self.warning(SemanticErrorKind::DeadLoop, f.span.clone());
+        }
+
         self.predeclare_in_block(&f.body);
         for s in &f.body {
             self.analyze_stmt(s);
@@ -624,10 +655,469 @@ impl Analyzer<'_> {
     pub(super) fn analyze_block(&mut self, body: &[Statement]) {
         self.push_scope();
         self.predeclare_in_block(body);
+        self.analyze_block_statements(body);
+        self.pop_scope();
+    }
+
+    #[instrument(skip(self, body), level = "trace")]
+    pub(super) fn analyze_block_statements(&mut self, body: &[Statement]) {
+        let mut pending_writes: HashMap<String, Span> = HashMap::new();
+
         for s in body {
+            // 1. Mark variables read in this statement as used/read (cancels pending overwritten warning)
+            let mut reads = HashSet::new();
+            collect_read_vars_in_stmt(self.ast, s, &mut reads);
+            for r in &reads {
+                pending_writes.remove(r);
+            }
+
+            // 2. Check for overwritten assignments before read
+            match s {
+                Statement::VarDecl(d) => {
+                    if d.value.is_some() {
+                        for name_tv in &d.names {
+                            let name = text_value_to_string(self.ast, name_tv);
+                            if let Some(prev_span) = pending_writes.remove(&name)
+                                && !self.callable_has_dynamic.last().copied().unwrap_or(false)
+                                && !name.starts_with('_')
+                                && !name.contains('%')
+                                && !self.is_std_span(&d.span)
+                            {
+                                self.warning(
+                                    SemanticErrorKind::OverwrittenAssignment { name: name.clone() },
+                                    prev_span,
+                                );
+                            }
+                            pending_writes.insert(name, d.span.clone());
+                        }
+                    }
+                }
+                Statement::Assign(a) => {
+                    let op_str = a.op.map(|s| self.str(s)).unwrap_or_default();
+                    if op_str == "=" {
+                        for &target in &a.targets {
+                            if let Some(name) = self.action_variable_name(target) {
+                                if let Some(prev_span) = pending_writes.remove(&name)
+                                    && !self.callable_has_dynamic.last().copied().unwrap_or(false)
+                                    && !name.starts_with('_')
+                                    && !name.contains('%')
+                                    && !self.is_std_span(&a.span)
+                                {
+                                    self.warning(
+                                        SemanticErrorKind::OverwrittenAssignment {
+                                            name: name.clone(),
+                                        },
+                                        prev_span,
+                                    );
+                                }
+                                pending_writes.insert(name, a.span.clone());
+                            }
+                        }
+                    }
+                }
+                Statement::If(_)
+                | Statement::While(_)
+                | Statement::For(_)
+                | Statement::Match(_)
+                | Statement::TryCatch(_) => {
+                    pending_writes.clear();
+                }
+                Statement::Expr(eid) => {
+                    if matches!(self.ast.exprs[*eid], Expr::Call(..) | Expr::Action(..)) {
+                        pending_writes.clear();
+                    }
+                }
+                _ => {}
+            }
+
             self.analyze_stmt(s);
         }
-        self.pop_scope();
+
+        // Check for consecutive if statements with identical condition
+        for w in body.windows(2) {
+            if let (Statement::If(if1), Statement::If(if2)) = (&w[0], &w[1])
+                && if1.elif_branches.is_empty()
+                && if1.else_body.is_none()
+                && if2.elif_branches.is_empty()
+                && exprs_structurally_equal(self.ast, if1.condition, if2.condition)
+                && !self.callable_has_dynamic.last().copied().unwrap_or(false)
+                && !self.is_std_span(&if2.span)
+            {
+                let mut cond_reads = HashSet::new();
+                collect_read_vars_in_expr(self.ast, if1.condition, &mut cond_reads);
+                let mut then_mods = HashSet::new();
+                collect_modified_vars_in_body(self.ast, &if1.then_body, &mut then_mods);
+                if cond_reads.is_disjoint(&then_mods) {
+                    self.warning(
+                        SemanticErrorKind::ConsecutiveIfSameCondition,
+                        if2.span.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn check_loop_invariants(&mut self, body: &[Statement], extra_modified: &[String]) {
+        if self.callable_has_dynamic.last().copied().unwrap_or(false) {
+            return;
+        }
+        let mut modified = HashSet::new();
+        modified.extend(extra_modified.iter().cloned());
+        collect_modified_vars_in_body(self.ast, body, &mut modified);
+
+        let mut declared_in_loop = HashSet::new();
+        for s in body {
+            if let Statement::VarDecl(d) = s {
+                if let Some(val_eid) = d.value
+                    && is_pure_computation(self.ast, val_eid)
+                {
+                    let mut reads = HashSet::new();
+                    collect_read_vars_in_expr(self.ast, val_eid, &mut reads);
+                    // If all reads are outside the loop and not modified in the loop:
+                    if !reads.is_empty()
+                        && reads
+                            .iter()
+                            .all(|r| !modified.contains(r) && !declared_in_loop.contains(r))
+                        && !self.is_std_span(&d.span)
+                    {
+                        for name_tv in &d.names {
+                            let name = text_value_to_string(self.ast, name_tv);
+                            if !name.starts_with('_')
+                                && !name.contains('%')
+                                && !self.is_std_span(&d.span)
+                            {
+                                self.warning(
+                                    SemanticErrorKind::LoopInvariant { name },
+                                    d.span.clone(),
+                                );
+                            }
+                        }
+                    }
+                }
+                for name_tv in &d.names {
+                    declared_in_loop.insert(text_value_to_string(self.ast, name_tv));
+                }
+            } else if let Statement::If(i) = s
+                && is_pure_computation(self.ast, i.condition)
+            {
+                let mut reads = HashSet::new();
+                collect_read_vars_in_expr(self.ast, i.condition, &mut reads);
+                if !reads.is_empty()
+                    && reads
+                        .iter()
+                        .all(|r| !modified.contains(r) && !declared_in_loop.contains(r))
+                    && !self.is_std_span(&i.span)
+                {
+                    self.warning(SemanticErrorKind::LoopInvariantBranch, i.span.clone());
+                }
+            }
+        }
+    }
+}
+
+fn is_pure_computation(ast: &Ast, eid: ExprId) -> bool {
+    match &ast.exprs[eid] {
+        Expr::Binary(b) => {
+            !matches!(b.op, BinOp::Assign)
+                && is_pure_expr(ast, b.left)
+                && is_pure_expr(ast, b.right)
+        }
+        Expr::Unary(u) => !matches!(u.op, UnOp::Inc | UnOp::Dec) && is_pure_expr(ast, u.operand),
+        Expr::Ternary(t) => {
+            is_pure_expr(ast, t.cond)
+                && is_pure_expr(ast, t.then_val)
+                && is_pure_expr(ast, t.else_val)
+        }
+        Expr::Subscript(s) => {
+            is_pure_expr(ast, s.object)
+                && is_pure_expr(ast, s.index)
+                && s.end.is_none_or(|e| is_pure_expr(ast, e))
+        }
+        _ => false,
+    }
+}
+
+fn is_pure_expr(ast: &Ast, eid: ExprId) -> bool {
+    match &ast.exprs[eid] {
+        Expr::Number(_) | Expr::Bool(_) | Expr::Ident(..) | Expr::Variable(_) | Expr::Nbt(_) => {
+            true
+        }
+        Expr::Text(t) => t.parts.iter().all(|p| match p {
+            TextPart::Literal(_) => true,
+            TextPart::Interp(e) => is_pure_expr(ast, *e),
+        }),
+        Expr::List(l) => l.values.iter().all(|&v| is_pure_expr(ast, v)),
+        Expr::Map(m) => {
+            m.keys.iter().all(|&k| is_pure_expr(ast, k))
+                && m.values.iter().all(|&v| is_pure_expr(ast, v))
+        }
+        Expr::Binary(b) => {
+            !matches!(b.op, BinOp::Assign)
+                && is_pure_expr(ast, b.left)
+                && is_pure_expr(ast, b.right)
+        }
+        Expr::Unary(u) => !matches!(u.op, UnOp::Inc | UnOp::Dec) && is_pure_expr(ast, u.operand),
+        Expr::Ternary(t) => {
+            is_pure_expr(ast, t.cond)
+                && is_pure_expr(ast, t.then_val)
+                && is_pure_expr(ast, t.else_val)
+        }
+        Expr::Property(p) => is_pure_expr(ast, p.object),
+        Expr::Subscript(s) => {
+            is_pure_expr(ast, s.object)
+                && is_pure_expr(ast, s.index)
+                && s.end.is_none_or(|e| is_pure_expr(ast, e))
+        }
+        Expr::Cast(c) => is_pure_expr(ast, c.expr),
+        _ => false,
+    }
+}
+
+fn collect_read_vars_in_text(ast: &Ast, t: &TextValue, out: &mut HashSet<String>) {
+    for part in &t.parts {
+        match part {
+            TextPart::Literal(s) => {
+                let text = ast.strings.resolve(s);
+                if text.contains('$') {
+                    drop(crate::ir::builder::expand_dollar_vars(
+                        text,
+                        |var_name, _, _| {
+                            out.insert(var_name.to_owned());
+                        },
+                    ));
+                }
+            }
+            TextPart::Interp(ieid) => {
+                collect_read_vars_in_expr(ast, *ieid, out);
+            }
+        }
+    }
+}
+
+fn collect_read_vars_in_expr(ast: &Ast, eid: ExprId, out: &mut HashSet<String>) {
+    match &ast.exprs[eid] {
+        Expr::Variable(v) => {
+            let name = text_value_to_string(ast, &v.name);
+            out.insert(name);
+            for part in &v.name.parts {
+                if let TextPart::Interp(ieid) = part {
+                    collect_read_vars_in_expr(ast, *ieid, out);
+                }
+            }
+        }
+        Expr::Ident(s, _) => {
+            out.insert(ast.strings.resolve(s).to_owned());
+        }
+        Expr::Text(t) => collect_read_vars_in_text(ast, t, out),
+        Expr::Binary(b) => {
+            collect_read_vars_in_expr(ast, b.left, out);
+            collect_read_vars_in_expr(ast, b.right, out);
+        }
+        Expr::Unary(u) => {
+            collect_read_vars_in_expr(ast, u.operand, out);
+        }
+        Expr::Ternary(t) => {
+            collect_read_vars_in_expr(ast, t.cond, out);
+            collect_read_vars_in_expr(ast, t.then_val, out);
+            collect_read_vars_in_expr(ast, t.else_val, out);
+        }
+        Expr::List(l) => {
+            for &v in &l.values {
+                collect_read_vars_in_expr(ast, v, out);
+            }
+        }
+        Expr::Map(m) => {
+            for &k in &m.keys {
+                collect_read_vars_in_expr(ast, k, out);
+            }
+            for &v in &m.values {
+                collect_read_vars_in_expr(ast, v, out);
+            }
+        }
+        Expr::Property(p) => {
+            collect_read_vars_in_expr(ast, p.object, out);
+        }
+        Expr::Subscript(s) => {
+            collect_read_vars_in_expr(ast, s.object, out);
+            collect_read_vars_in_expr(ast, s.index, out);
+            if let Some(e) = s.end {
+                collect_read_vars_in_expr(ast, e, out);
+            }
+        }
+        Expr::Call(c) => {
+            collect_read_vars_in_expr(ast, c.target, out);
+            for arg in &c.args {
+                collect_read_vars_in_expr(ast, arg.value, out);
+            }
+        }
+        Expr::Action(a) => {
+            for arg in &a.args {
+                collect_read_vars_in_expr(ast, arg.value, out);
+            }
+        }
+        Expr::Constructor(c) => {
+            for arg in &c.args {
+                collect_read_vars_in_expr(ast, arg.value, out);
+            }
+        }
+        Expr::Cast(c) => {
+            collect_read_vars_in_expr(ast, c.expr, out);
+        }
+        Expr::Match(m) => {
+            collect_read_vars_in_expr(ast, m.expr, out);
+            for arm in &m.arms {
+                for &pat in &arm.patterns {
+                    collect_read_vars_in_expr(ast, pat, out);
+                }
+                if let Some(guard) = arm.guard {
+                    collect_read_vars_in_expr(ast, guard, out);
+                }
+                for s in &arm.body {
+                    collect_read_vars_in_stmt(ast, s, out);
+                }
+            }
+        }
+        Expr::Lambda(l) => match &l.body {
+            LambdaBody::Expr(e) => collect_read_vars_in_expr(ast, *e, out),
+            LambdaBody::Block(stmts) => {
+                for s in stmts {
+                    collect_read_vars_in_stmt(ast, s, out);
+                }
+            }
+        },
+        Expr::Number(_) | Expr::Bool(_) | Expr::Nbt(_) => {}
+    }
+}
+
+pub(super) fn collect_read_vars_in_stmt(ast: &Ast, stmt: &Statement, out: &mut HashSet<String>) {
+    match stmt {
+        Statement::VarDecl(d) => {
+            if let Some(v) = d.value {
+                collect_read_vars_in_expr(ast, v, out);
+            }
+        }
+        Statement::Assign(a) => {
+            collect_read_vars_in_expr(ast, a.value, out);
+            for &t in &a.targets {
+                if let Expr::Subscript(s) = &ast.exprs[t] {
+                    collect_read_vars_in_expr(ast, s.object, out);
+                    collect_read_vars_in_expr(ast, s.index, out);
+                    if let Some(e) = s.end {
+                        collect_read_vars_in_expr(ast, e, out);
+                    }
+                } else if let Expr::Property(p) = &ast.exprs[t] {
+                    collect_read_vars_in_expr(ast, p.object, out);
+                }
+            }
+        }
+        Statement::Return(r) => {
+            if let Some(v) = r.value {
+                collect_read_vars_in_expr(ast, v, out);
+            }
+        }
+        Statement::While(w) => {
+            collect_read_vars_in_expr(ast, w.condition, out);
+            for s in &w.body {
+                collect_read_vars_in_stmt(ast, s, out);
+            }
+        }
+        Statement::For(f) => {
+            collect_read_vars_in_expr(ast, f.iterable, out);
+            for s in &f.body {
+                collect_read_vars_in_stmt(ast, s, out);
+            }
+        }
+        Statement::If(i) => {
+            collect_read_vars_in_expr(ast, i.condition, out);
+            for s in &i.then_body {
+                collect_read_vars_in_stmt(ast, s, out);
+            }
+            for (c, b) in &i.elif_branches {
+                collect_read_vars_in_expr(ast, *c, out);
+                for s in b {
+                    collect_read_vars_in_stmt(ast, s, out);
+                }
+            }
+            if let Some(b) = &i.else_body {
+                for s in b {
+                    collect_read_vars_in_stmt(ast, s, out);
+                }
+            }
+        }
+        Statement::Match(m) => {
+            collect_read_vars_in_expr(ast, m.expr, out);
+            for arm in &m.arms {
+                if let Some(g) = arm.guard {
+                    collect_read_vars_in_expr(ast, g, out);
+                }
+                for s in &arm.body {
+                    collect_read_vars_in_stmt(ast, s, out);
+                }
+            }
+        }
+        Statement::TryCatch(tc) => {
+            for s in &tc.try_body {
+                collect_read_vars_in_stmt(ast, s, out);
+            }
+            for s in &tc.catch_body {
+                collect_read_vars_in_stmt(ast, s, out);
+            }
+        }
+        Statement::Throw(th) => {
+            if let Some(v) = th.value {
+                collect_read_vars_in_expr(ast, v, out);
+            }
+        }
+        Statement::Expr(e) => {
+            collect_read_vars_in_expr(ast, *e, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_modified_vars_in_body(ast: &Ast, body: &[Statement], out: &mut HashSet<String>) {
+    for s in body {
+        match s {
+            Statement::Assign(a) => {
+                for &t in &a.targets {
+                    match &ast.exprs[t] {
+                        Expr::Variable(v) => {
+                            out.insert(text_value_to_string(ast, &v.name));
+                        }
+                        Expr::Ident(id, _) => {
+                            out.insert(ast.strings.resolve(id).to_owned());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Statement::While(w) => collect_modified_vars_in_body(ast, &w.body, out),
+            Statement::For(f) => {
+                for v in &f.vars {
+                    out.insert(text_value_to_string(ast, v));
+                }
+                collect_modified_vars_in_body(ast, &f.body, out);
+            }
+            Statement::If(i) => {
+                collect_modified_vars_in_body(ast, &i.then_body, out);
+                for (_, b) in &i.elif_branches {
+                    collect_modified_vars_in_body(ast, b, out);
+                }
+                if let Some(b) = &i.else_body {
+                    collect_modified_vars_in_body(ast, b, out);
+                }
+            }
+            Statement::TryCatch(tc) => {
+                collect_modified_vars_in_body(ast, &tc.try_body, out);
+                collect_modified_vars_in_body(ast, &tc.catch_body, out);
+            }
+            Statement::Match(m) => {
+                for arm in &m.arms {
+                    collect_modified_vars_in_body(ast, &arm.body, out);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -643,5 +1133,38 @@ const fn compound_assign_dunders(op: &str) -> Option<(&'static str, &'static str
         b"%=" => Some(("__iremainder__", "__remainder__")),
         b"^=" => Some(("__ipow__", "__pow__")),
         _ => None,
+    }
+}
+
+fn exprs_structurally_equal(ast: &Ast, a: ExprId, b: ExprId) -> bool {
+    match (&ast.exprs[a], &ast.exprs[b]) {
+        (Expr::Number(n1), Expr::Number(n2)) => (n1.value - n2.value).abs() < f64::EPSILON,
+        (Expr::Bool(b1), Expr::Bool(b2)) => b1.value == b2.value,
+        (Expr::Ident(s1, _), Expr::Ident(s2, _)) => s1 == s2,
+        (Expr::Variable(v1), Expr::Variable(v2)) => {
+            v1.scope == v2.scope
+                && text_value_to_string(ast, &v1.name) == text_value_to_string(ast, &v2.name)
+        }
+        (Expr::Binary(b1), Expr::Binary(b2)) => {
+            b1.op == b2.op
+                && exprs_structurally_equal(ast, b1.left, b2.left)
+                && exprs_structurally_equal(ast, b1.right, b2.right)
+        }
+        (Expr::Unary(u1), Expr::Unary(u2)) => {
+            u1.op == u2.op && exprs_structurally_equal(ast, u1.operand, u2.operand)
+        }
+        (Expr::Property(p1), Expr::Property(p2)) => {
+            p1.property == p2.property && exprs_structurally_equal(ast, p1.object, p2.object)
+        }
+        (Expr::Subscript(s1), Expr::Subscript(s2)) => {
+            exprs_structurally_equal(ast, s1.object, s2.object)
+                && exprs_structurally_equal(ast, s1.index, s2.index)
+                && match (s1.end, s2.end) {
+                    (Some(e1), Some(e2)) => exprs_structurally_equal(ast, e1, e2),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
+        _ => false,
     }
 }

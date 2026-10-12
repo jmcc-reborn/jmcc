@@ -230,6 +230,14 @@ impl<'a> InlineAdvisor<'a> {
             return InlineCost::Never("arity mismatch or variadic parameters");
         }
 
+        if callee
+            .params
+            .iter()
+            .any(|p| crate::utils::split_param_ref(p).1)
+        {
+            return InlineCost::Never("function has reference parameters");
+        }
+
         if has_early_or_multiple_returns(self.expr, callee.body_id) {
             return InlineCost::Never("callee contains early or multiple returns");
         }

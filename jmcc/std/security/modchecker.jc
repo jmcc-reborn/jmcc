@@ -101,7 +101,7 @@ export class ModChecker {
 
         if not self.allowedTranslations.map_has_key(input) {
             if self.player_mods.map_has_key(player_name) {
-                self.player_mods[player_name].append_value(input);
+                self.player_mods[player_name].push(input);
             } else {
                 self.player_mods[player_name] = [input];
             }
@@ -158,7 +158,7 @@ export class ModChecker {
         for loc in mods_list {
             if not self.allowedTranslations.map_has_key(loc) {
                 detectMod = loc;
-                self.bad_players.append_value(
+                self.bad_players.push(
                     "&#FF6E6E ◦ &f&n${target_name}&#7A8085 • &f${detectMod} &#7A8085(&7${detectMod}&#7A8085)",
                 );
 
@@ -179,7 +179,7 @@ export class ModChecker {
             }
         }
 
-        if detectMod.equals([0]) {
+        if detectMod == 0 {
             select::player_by_conditional(player::name_equals([sender]));
             player::message<all_players>(
                 [

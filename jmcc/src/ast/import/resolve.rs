@@ -1,6 +1,6 @@
 //! File resolution and import graph traversal: prelude, std, directories, visited set.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use id_arena::Arena;
@@ -57,6 +57,21 @@ impl ImportResolver {
 
         trace!(module_name = %module_name, "Resolved module name");
         Ok(module_name)
+    }
+
+    fn get_enabled_features_for_path(&self, path: &Path) -> HashSet<String> {
+        let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        for (pkg_name, pkg_root) in &self.package_roots {
+            let canon_pkg = pkg_root.canonicalize().unwrap_or_else(|_| pkg_root.clone());
+            if canon.starts_with(&canon_pkg) {
+                return self
+                    .package_features
+                    .get(pkg_name)
+                    .cloned()
+                    .unwrap_or_default();
+            }
+        }
+        self.root_features.clone()
     }
 
     fn find_prelude_path(&self) -> Option<PathBuf> {
@@ -162,6 +177,9 @@ impl ImportResolver {
                 e
             })?;
         self.global_offset += src.len() + 1;
+
+        let enabled_features = self.get_enabled_features_for_path(&canon);
+        ast.filter_cfg(&enabled_features, self.known_features.as_ref());
 
         let module_name = self.get_module_name(&canon)?;
         if self.edition >= 2026 && !module_name.is_empty() {

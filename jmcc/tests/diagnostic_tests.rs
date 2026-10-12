@@ -347,3 +347,338 @@ function main() {
 
     drop(fs::remove_file(file_path));
 }
+
+#[test]
+fn test_return_inside_event_allowed() {
+    let temp_dir = std::env::temp_dir().join("jmcc_test_return_event_allowed");
+    drop(fs::create_dir_all(&temp_dir));
+    let file_path = temp_dir.join("test_return_event.jc");
+    fs::write(
+        &file_path,
+        r#"
+event<player_join> {
+    if true {
+        return;
+    }
+    player::message("hello");
+}
+"#,
+    )
+    .unwrap();
+
+    let res = compile_file(&file_path, &test_options(2026, 2));
+    assert!(
+        res.is_ok(),
+        "return; inside event must be allowed, got: {:?}",
+        res.err()
+    );
+
+    drop(fs::remove_file(file_path));
+}
+
+#[test]
+fn test_return_value_inside_event_disallowed() {
+    let temp_dir = std::env::temp_dir().join("jmcc_test_return_val_event_disallowed");
+    drop(fs::create_dir_all(&temp_dir));
+    let file_path = temp_dir.join("test_return_val_event.jc");
+    fs::write(
+        &file_path,
+        r#"
+event<player_join> {
+    return 42;
+}
+"#,
+    )
+    .unwrap();
+
+    let err = compile_file(&file_path, &test_options(2026, 2)).unwrap_err();
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("E0061"),
+        "expected error E0061 (event cannot return a value), got: {err_str}"
+    );
+
+    drop(fs::remove_file(file_path));
+}
+
+#[test]
+fn test_not_operator_precedence_in_if_and_while() {
+    use jmcc::ast::{BinOp, Expr, Statement, UnOp};
+
+    let source = r#"
+    if not a and b {
+        player::message("test");
+    }
+    while not c or d {
+        player::message("loop");
+    }
+    "#;
+    let ast = parse_string(source, "test_not_prec.jc", 2026, 0).unwrap();
+
+    // First statement: If
+    match &ast.statements[0] {
+        Statement::If(if_stmt) => match &ast.exprs[if_stmt.condition] {
+            Expr::Binary(bin) => {
+                assert_eq!(
+                    bin.op,
+                    BinOp::And,
+                    "expected top-level binary op to be 'And'"
+                );
+                match &ast.exprs[bin.left] {
+                    Expr::Unary(un) => {
+                        assert_eq!(un.op, UnOp::Not, "expected left operand to be 'Not a'");
+                    }
+                    other => panic!("expected left operand to be Unary(Not), got: {other:?}"),
+                }
+            }
+            other => panic!("expected condition to be Binary(And), got: {other:?}"),
+        },
+        other => panic!("expected Statement::If, got: {other:?}"),
+    }
+
+    // Second statement: While
+    match &ast.statements[1] {
+        Statement::While(while_stmt) => match &ast.exprs[while_stmt.condition] {
+            Expr::Binary(bin) => {
+                assert_eq!(bin.op, BinOp::Or, "expected top-level binary op to be 'Or'");
+                match &ast.exprs[bin.left] {
+                    Expr::Unary(un) => {
+                        assert_eq!(un.op, UnOp::Not, "expected left operand to be 'Not c'");
+                    }
+                    other => panic!("expected left operand to be Unary(Not), got: {other:?}"),
+                }
+            }
+            other => panic!("expected condition to be Binary(Or), got: {other:?}"),
+        },
+        other => panic!("expected Statement::While, got: {other:?}"),
+    }
+}
+
+#[test]
+fn test_warning_overwritten_assignment() {
+    use jmcc::ast::analyze_for_diagnostics;
+    use jmcc::ast::semantic::SemanticErrorKind;
+    use jmcc::ir::ctx::IrCtx;
+
+    let source = r#"
+function test_warn() {
+    var x = 10;
+    x = 20;
+    player::message(x);
+}
+"#;
+    let ast = parse_string(source, "test_warn.jc", 2026, 0).unwrap();
+    let ir_ctx = IrCtx::new(&ast);
+    let (_, diags) = analyze_for_diagnostics(&ast, source, &ir_ctx, 2026);
+
+    let found = diags.iter().any(|(kind, _)| {
+        matches!(kind, SemanticErrorKind::OverwrittenAssignment { name } if name == "x")
+    });
+    assert!(
+        found,
+        "expected OverwrittenAssignment warning for variable 'x', got: {diags:?}"
+    );
+
+    let (kind, span) = diags
+        .iter()
+        .find(|(k, _)| matches!(k, SemanticErrorKind::OverwrittenAssignment { .. }))
+        .unwrap();
+    let diag = jmcc::diagnostic::semantic_to_diagnostic(kind, span, &ast, jmcc::i18n::Lang::En);
+    assert_eq!(diag.code.as_deref(), Some("W0004"));
+}
+
+#[test]
+fn test_warning_loop_invariant() {
+    use jmcc::ast::analyze_for_diagnostics;
+    use jmcc::ast::semantic::SemanticErrorKind;
+    use jmcc::ir::ctx::IrCtx;
+
+    let source = r#"
+function test_loop(a: number, b: number) {
+    var i = 0;
+    while i < 10 {
+        var inv = a + b;
+        player::message(inv);
+        i += 1;
+    }
+}
+"#;
+    let ast = parse_string(source, "test_loop.jc", 2026, 0).unwrap();
+    let ir_ctx = IrCtx::new(&ast);
+    let (_, diags) = analyze_for_diagnostics(&ast, source, &ir_ctx, 2026);
+
+    let found = diags.iter().any(
+        |(kind, _)| matches!(kind, SemanticErrorKind::LoopInvariant { name } if name == "inv"),
+    );
+    assert!(
+        found,
+        "expected LoopInvariant warning for variable 'inv', got: {diags:?}"
+    );
+
+    let (kind, span) = diags
+        .iter()
+        .find(|(k, _)| matches!(k, SemanticErrorKind::LoopInvariant { .. }))
+        .unwrap();
+    let diag = jmcc::diagnostic::semantic_to_diagnostic(kind, span, &ast, jmcc::i18n::Lang::En);
+    assert_eq!(diag.code.as_deref(), Some("W0005"));
+}
+
+#[test]
+fn test_warning_suppressed_for_underscored() {
+    use jmcc::ast::analyze_for_diagnostics;
+    use jmcc::ast::semantic::SemanticErrorKind;
+    use jmcc::ir::ctx::IrCtx;
+
+    let source = r#"
+function test_suppressed() {
+    var _x = 10;
+    _x = 20;
+    player::message(_x);
+}
+"#;
+    let ast = parse_string(source, "test_suppressed.jc", 2026, 0).unwrap();
+    let ir_ctx = IrCtx::new(&ast);
+    let (_, diags) = analyze_for_diagnostics(&ast, source, &ir_ctx, 2026);
+
+    let found = diags
+        .iter()
+        .any(|(kind, _)| matches!(kind, SemanticErrorKind::OverwrittenAssignment { .. }));
+    assert!(
+        !found,
+        "expected OverwrittenAssignment to be suppressed for _x, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_warning_consecutive_if_same_condition() {
+    use jmcc::ast::analyze_for_diagnostics;
+    use jmcc::ast::semantic::SemanticErrorKind;
+    use jmcc::ir::ctx::IrCtx;
+
+    let source = r#"
+function test_consec_if(x: number) {
+    if x > 0 {
+        player::message("one");
+    }
+    if x > 0 {
+        player::message("two");
+    }
+}
+"#;
+    let ast = parse_string(source, "test_consec.jc", 2026, 0).unwrap();
+    let ir_ctx = IrCtx::new(&ast);
+    let (_, diags) = analyze_for_diagnostics(&ast, source, &ir_ctx, 2026);
+
+    let found = diags
+        .iter()
+        .any(|(kind, _)| matches!(kind, SemanticErrorKind::ConsecutiveIfSameCondition));
+    assert!(
+        found,
+        "expected ConsecutiveIfSameCondition warning, got: {diags:?}"
+    );
+
+    let (kind, span) = diags
+        .iter()
+        .find(|(k, _)| matches!(k, SemanticErrorKind::ConsecutiveIfSameCondition))
+        .unwrap();
+    let diag = jmcc::diagnostic::semantic_to_diagnostic(kind, span, &ast, jmcc::i18n::Lang::En);
+    assert_eq!(diag.code.as_deref(), Some("W0006"));
+}
+
+#[test]
+fn test_warning_unused_parameter() {
+    use jmcc::ast::analyze_for_diagnostics;
+    use jmcc::ast::semantic::SemanticErrorKind;
+    use jmcc::ir::ctx::IrCtx;
+
+    let source = r#"
+function test_unused_param(used: number, unused: number) {
+    player::message(used);
+}
+"#;
+    let ast = parse_string(source, "test_param.jc", 2026, 0).unwrap();
+    let ir_ctx = IrCtx::new(&ast);
+    let (_, diags) = analyze_for_diagnostics(&ast, source, &ir_ctx, 2026);
+
+    let found = diags.iter().any(|(kind, _)| {
+        matches!(kind, SemanticErrorKind::UnusedParameter { name, .. } if name == "unused")
+    });
+    assert!(
+        found,
+        "expected UnusedParameter warning for 'unused', got: {diags:?}"
+    );
+
+    let (kind, span) = diags
+        .iter()
+        .find(|(k, _)| matches!(k, SemanticErrorKind::UnusedParameter { .. }))
+        .unwrap();
+    let diag = jmcc::diagnostic::semantic_to_diagnostic(kind, span, &ast, jmcc::i18n::Lang::En);
+    assert_eq!(diag.code.as_deref(), Some("W0007"));
+}
+
+#[test]
+fn test_warning_dead_loop() {
+    use jmcc::ast::analyze_for_diagnostics;
+    use jmcc::ast::semantic::SemanticErrorKind;
+    use jmcc::ir::ctx::IrCtx;
+
+    let source = r#"
+function test_empty_loop() {
+    var i = 0;
+    while i < 10 {
+    }
+}
+"#;
+    let ast = parse_string(source, "test_empty_loop.jc", 2026, 0).unwrap();
+    let ir_ctx = IrCtx::new(&ast);
+    let (_, diags) = analyze_for_diagnostics(&ast, source, &ir_ctx, 2026);
+
+    let found = diags
+        .iter()
+        .any(|(kind, _)| matches!(kind, SemanticErrorKind::DeadLoop));
+    assert!(found, "expected DeadLoop warning, got: {diags:?}");
+
+    let (kind, span) = diags
+        .iter()
+        .find(|(k, _)| matches!(k, SemanticErrorKind::DeadLoop))
+        .unwrap();
+    let diag = jmcc::diagnostic::semantic_to_diagnostic(kind, span, &ast, jmcc::i18n::Lang::En);
+    assert_eq!(diag.code.as_deref(), Some("W0008"));
+}
+
+#[test]
+fn test_warning_loop_invariant_branch() {
+    use jmcc::ast::analyze_for_diagnostics;
+    use jmcc::ast::semantic::SemanticErrorKind;
+    use jmcc::ir::ctx::IrCtx;
+
+    let source = r#"
+function test_inv_branch(cond: number) {
+    var i = 0;
+    while i < 10 {
+        if cond > 0 {
+            player::message("gt");
+        }
+        i += 1;
+    }
+}
+"#;
+    let ast = parse_string(source, "test_inv_branch.jc", 2026, 0).unwrap();
+    let ir_ctx = IrCtx::new(&ast);
+    let (_, diags) = analyze_for_diagnostics(&ast, source, &ir_ctx, 2026);
+
+    let found = diags
+        .iter()
+        .any(|(kind, _)| matches!(kind, SemanticErrorKind::LoopInvariantBranch));
+    assert!(
+        found,
+        "expected LoopInvariantBranch warning, got: {diags:?}"
+    );
+
+    let (kind, span) = diags
+        .iter()
+        .find(|(k, _)| matches!(k, SemanticErrorKind::LoopInvariantBranch))
+        .unwrap();
+    let diag = jmcc::diagnostic::semantic_to_diagnostic(kind, span, &ast, jmcc::i18n::Lang::En);
+    assert_eq!(diag.code.as_deref(), Some("W0009"));
+}

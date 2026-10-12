@@ -54,8 +54,12 @@ impl Analyzer<'_> {
         params: &[Param],
         return_type: Option<Type>,
         is_function: bool,
+        func_name: Option<String>,
+        is_exported: bool,
     ) {
         self.push_scope();
+        self.callable_depth += 1;
+        self.callable_has_dynamic.push(false);
         self.predeclare_in_block(body);
         let prev_in_function = self.in_function;
         let prev_in_process = self.in_process;
@@ -75,14 +79,56 @@ impl Analyzer<'_> {
             }
             self.declare(self.str(p.name), Symbol::Param { ty });
         }
-        for s in body {
-            self.analyze_stmt(s);
-        }
+        self.analyze_block_statements(body);
         self.in_function = prev_in_function;
         self.in_process = prev_in_process;
         self.function_return_type = prev_ret;
         self.current_event = prev_event;
         self.pop_scope();
+        let depth = self.callable_depth;
+        let has_dyn = self.callable_has_dynamic.pop().unwrap_or(false);
+        self.callable_depth -= 1;
+        self.check_unused_vars(depth, has_dyn);
+
+        if is_function && !is_exported && !has_dyn {
+            let func = func_name.unwrap_or_else(|| "anonymous".into());
+            let mut body_reads = HashSet::new();
+            for s in body {
+                stmts::collect_read_vars_in_stmt(self.ast, s, &mut body_reads);
+            }
+            for p in params {
+                let name = self.str(p.name);
+                if !name.starts_with('_')
+                    && !name.contains('%')
+                    && !self.is_std_span(&p.span)
+                    && !body_reads.contains(&name)
+                {
+                    self.warning(
+                        SemanticErrorKind::UnusedParameter {
+                            name,
+                            func: func.clone(),
+                        },
+                        p.span.clone(),
+                    );
+                }
+            }
+        }
+    }
+
+    fn check_unused_vars(&mut self, depth: usize, has_dyn: bool) {
+        if !has_dyn {
+            let unused: Vec<(String, Span)> = self
+                .var_declarations
+                .iter()
+                .filter(|rec| {
+                    rec.callable_depth == depth && !rec.used && !self.is_std_span(&rec.span)
+                })
+                .map(|rec| (rec.name.clone(), rec.span.clone()))
+                .collect();
+            for (name, span) in unused {
+                self.warning(SemanticErrorKind::UnusedVariable { name }, span);
+            }
+        }
     }
 
     /// Return type for a predeclared function: the annotation, else inferred from `return <value>`.
@@ -120,7 +166,14 @@ impl Analyzer<'_> {
                 this.getter_setter_stack.push(short_name);
             }
 
-            this.analyze_callable(&f.body, &f.params, return_type, true);
+            this.analyze_callable(
+                &f.body,
+                &f.params,
+                return_type,
+                true,
+                Some(full_name),
+                f.is_exported,
+            );
 
             if is_property {
                 this.getter_setter_stack.pop();
@@ -130,14 +183,21 @@ impl Analyzer<'_> {
 
     #[instrument(skip(self, p), level = "trace")]
     pub(super) fn analyze_process(&mut self, p: &ProcessDecl) {
-        self.analyze_callable(&p.body, &p.params, None, false);
+        let name = self.str(p.name);
+        self.analyze_callable(&p.body, &p.params, None, false, Some(name), p.is_exported);
     }
 
     #[instrument(skip(self, e), level = "trace")]
     pub(super) fn analyze_event(&mut self, e: &EventDecl) {
         let ev_name = self.str(e.event_name);
         let prev_event = self.current_event.replace(ev_name);
+        self.callable_depth += 1;
+        self.callable_has_dynamic.push(false);
         self.analyze_block(&e.body);
+        let depth = self.callable_depth;
+        let has_dyn = self.callable_has_dynamic.pop().unwrap_or(false);
+        self.callable_depth -= 1;
+        self.check_unused_vars(depth, has_dyn);
         self.current_event = prev_event;
     }
 
@@ -216,5 +276,6 @@ pub(super) fn has_value_return(stmts: &[Statement]) -> bool {
         | Statement::Assign(_)
         | Statement::Expr(_)
         | Statement::Throw(_) => false,
+        Statement::Cfg(_, inner) => has_value_return(std::slice::from_ref(inner)),
     })
 }

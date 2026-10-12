@@ -1,10 +1,10 @@
 //! LSP server document state management, compiler cache, and overlay synchronization.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use jmcc::ast::semantic::{SemanticErrorKind, Type, analyze_for_diagnostics};
-use jmcc::ast::{Ast, ExprId, parse_file_with_full_options};
+use jmcc::ast::{Ast, ExprId, parse_file_with_features_ext};
 use jmcc::error::JmccError;
 use jmcc::i18n::{Lang, current_lang};
 use jmcc::ir::ctx::IrCtx;
@@ -134,9 +134,10 @@ impl ServerState {
 
     /// Registers a newly opened document and triggers compilation.
     pub fn open_document(&mut self, uri: Url, version: i32, text: String) {
-        let Some(path) = Self::url_to_path(&uri) else {
+        let Some(raw_path) = Self::url_to_path(&uri) else {
             return;
         };
+        let path = raw_path.canonicalize().unwrap_or(raw_path);
 
         let lang = self.determine_lang(&path, &text);
         let edition = self.determine_edition(&path);
@@ -213,6 +214,11 @@ impl ServerState {
         Self::recompile_doc(doc, overlays, doc.lang, self.std_path.as_deref());
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        clippy::result_large_err,
+        reason = "Comprehensive recompile logic and ProjectError size"
+    )]
     fn recompile_doc(
         doc: &mut DocumentData,
         overlays: HashMap<PathBuf, String>,
@@ -223,19 +229,52 @@ impl ServerState {
         doc.semantic_errors.clear();
 
         let edition = doc.edition;
-        let package_roots = Project::find(&doc.path)
-            .ok()
-            .flatten()
-            .and_then(|p| p.resolve_dependencies_ext(false, true, true).ok())
-            .map(|g| g.to_package_roots())
-            .unwrap_or_default();
+        let (package_roots, root_features, package_features, known_features) =
+            if let Ok(Some(project)) = Project::find(&doc.path) {
+                let requested_features = project.manifest.default_features();
+                let known_features = if project.manifest.features.is_empty() {
+                    None
+                } else {
+                    Some(project.manifest.all_features().into_iter().collect())
+                };
+                let (enabled_root_feats, _, _) =
+                    project.manifest.resolve_features(&requested_features);
+
+                let (roots, pkg_feats, root_feats) = match project
+                    .resolve_dependencies_with_features(false, true, true, &requested_features)
+                    .or_else(|_| {
+                        project.resolve_dependencies_with_features(
+                            false,
+                            false,
+                            true,
+                            &requested_features,
+                        )
+                    }) {
+                    Ok(graph) => {
+                        let roots = graph.to_package_roots();
+                        let rf = graph
+                            .package_features
+                            .get(project.name())
+                            .cloned()
+                            .unwrap_or(enabled_root_feats);
+                        (roots, graph.package_features, rf)
+                    }
+                    Err(_) => (HashMap::new(), HashMap::new(), enabled_root_feats),
+                };
+                (roots, root_feats, pkg_feats, known_features)
+            } else {
+                (HashMap::new(), HashSet::new(), HashMap::new(), None)
+            };
 
         // 1. Parse AST with overlays and optional custom std path
         let custom_std_buf = custom_std.map(Path::to_path_buf);
-        match parse_file_with_full_options(
+        match parse_file_with_features_ext(
             &doc.path,
             edition,
             package_roots,
+            root_features,
+            package_features,
+            known_features,
             overlays,
             custom_std_buf,
         ) {
@@ -249,7 +288,10 @@ impl ServerState {
 
                 let diags = semantic_errors_to_lsp(&semantic_errors, &ast, &doc.path, lang);
                 doc.diagnostics = diags;
-                doc.semantic_errors = semantic_errors;
+                doc.semantic_errors = semantic_errors
+                    .into_iter()
+                    .filter(|(kind, _)| !kind.is_warning())
+                    .collect();
                 doc.expr_types = expr_types;
                 doc.ast = Some(ast);
                 doc.ir_ctx = Some(ir_ctx);
@@ -268,26 +310,41 @@ impl ServerState {
                         )
                         .ok();
                         if let Some(ast) = &synthetic_ast {
+                            // Single-file parse succeeded (e.g. import failed).
+                            // Keep AST and IrCtx in doc so completions and analysis still work!
+                            let ir_ctx = IrCtx::new(ast);
+                            doc.ir_ctx = Some(ir_ctx);
+                            doc.ast = Some(ast.clone());
+
                             if let Some(lsp_diag) =
                                 compiler_diag_to_lsp(&diagnostic, ast, &doc.path, lang)
                             {
                                 doc.diagnostics.push(lsp_diag);
                             }
                         } else {
-                            doc.diagnostics.push(Diagnostic {
-                                range: Range::default(),
-                                severity: Some(lsp_types::DiagnosticSeverity::ERROR),
-                                code: diagnostic
-                                    .code
-                                    .as_ref()
-                                    .map(|c| lsp_types::NumberOrString::String(c.to_string())),
-                                source: Some("jmc-analyzer".to_owned()),
-                                message: diagnostic.message.clone(),
-                                related_information: None,
-                                tags: None,
-                                code_description: None,
-                                data: None,
-                            });
+                            // Syntax error in current file: map directly using doc.text LineIndex
+                            if let Some(lsp_diag) = super::diagnostics::compiler_diag_to_lsp_direct(
+                                &diagnostic,
+                                &doc.text,
+                                lang,
+                            ) {
+                                doc.diagnostics.push(lsp_diag);
+                            } else {
+                                doc.diagnostics.push(Diagnostic {
+                                    range: Range::default(),
+                                    severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+                                    code: diagnostic
+                                        .code
+                                        .as_ref()
+                                        .map(|c| lsp_types::NumberOrString::String(c.to_string())),
+                                    source: Some("jmc-analyzer".to_owned()),
+                                    message: diagnostic.message.clone(),
+                                    related_information: None,
+                                    tags: None,
+                                    code_description: None,
+                                    data: None,
+                                });
+                            }
                         }
                     }
                     other => {

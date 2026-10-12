@@ -14,11 +14,26 @@ impl MirLowerer<'_> {
             let ret = self.add(Mir::Local(ret_raw));
             (ret, None)
         };
-        let args = self.build_func_args_map(args, target, ret_arg)?;
+        let (args, forwarded_refs) = self.build_func_args_map(args, target, ret_arg)?;
         let function = self.named_arg("function_name", target_id);
         let args = self.named_arg("args", args);
         let action = self.make_action("code", "call_function", vec![function, args]);
-        Ok(self.add(Mir::Let([ret, action, ret])))
+
+        if forwarded_refs.is_empty() {
+            Ok(self.add(Mir::Let([ret, action, ret])))
+        } else {
+            let mut ops = Vec::with_capacity(forwarded_refs.len() * 2 + 2);
+            for &(orig, temp) in &forwarded_refs {
+                ops.push(self.make_set_var(temp, orig));
+            }
+            ops.push(action);
+            for &(orig, temp) in &forwarded_refs {
+                ops.push(self.make_set_var(orig, temp));
+            }
+            ops.push(ret);
+            let block = self.add(Mir::Block(ops.into_boxed_slice()));
+            Ok(self.add(Mir::Let([ret, block, ret])))
+        }
     }
 
     #[instrument(skip(self), level = "trace")]
@@ -93,7 +108,7 @@ impl MirLowerer<'_> {
     }
 
     #[instrument(skip(self, name), level = "trace")]
-    fn find_func_params(&self, name: &str) -> Result<Vec<(String, u8)>, MirError> {
+    fn find_func_params(&self, name: &str) -> Result<Vec<(String, u8, bool)>, MirError> {
         for idx in 0..self.hir.as_ref().len() {
             let id = Id::from(idx);
             if let Hir::FuncDecl([name_id, params_id, _]) = &self.hir[id] {
@@ -108,9 +123,9 @@ impl MirLowerer<'_> {
                                 }
                                 _ => extract_str_hir(self.hir, p_id)?,
                             };
-                            let (name, _is_ref) = crate::utils::split_param_ref(&p_name);
+                            let (name, is_ref) = crate::utils::split_param_ref(&p_name);
                             let (stripped, spread) = crate::utils::split_param_spread(name);
-                            params.push((stripped.to_owned(), spread));
+                            params.push((stripped.to_owned(), spread, is_ref));
                         }
                     }
                     return Ok(params);
@@ -120,13 +135,46 @@ impl MirLowerer<'_> {
         Err(MirError::FunctionNotFound(name.to_owned()))
     }
 
+    fn lower_ref_arg(&mut self, v: Id, param_name: &str) -> Result<Id, MirError> {
+        let val = self.lower_expr(v)?;
+        if !self.is_variable_mir(val) {
+            return Err(MirError::NonVariablePassedToRef(param_name.to_owned()));
+        }
+        Ok(val)
+    }
+
+    fn is_variable_mir(&self, id: Id) -> bool {
+        match &self.nodes.as_slice()[usize::from(id)] {
+            Mir::Var(_) => true,
+            Mir::Line(i) | Mir::Local(i) | Mir::Game(i) | Mir::Save(i) => self.is_variable_mir(*i),
+            _ => false,
+        }
+    }
+
+    fn lower_ref_arg_forwarding(
+        &mut self,
+        v: Id,
+        param_name: &str,
+        func_name: &str,
+    ) -> Result<(Id, Option<(Id, Id)>), MirError> {
+        let val = self.lower_ref_arg(v, param_name)?;
+        if let Some(var_name) = self.extract_var_name_mir(val)
+            && self.current_ref_params.contains(&var_name)
+        {
+            Self::emit_nested_ref_warning(&var_name, param_name, func_name);
+            let temp = self.fresh_ref_forward_temp();
+            return Ok((temp, Some((val, temp))));
+        }
+        Ok((val, None))
+    }
+
     #[instrument(skip(self), level = "trace")]
     fn build_func_args_map(
         &mut self,
         args_hir_id: Id,
         target_hir_id: Id,
         ret_var: Option<Id>,
-    ) -> Result<Id, MirError> {
+    ) -> Result<(Id, Vec<(Id, Id)>), MirError> {
         let func_name = match &self.hir[target_hir_id] {
             Hir::Str(s) => s.0.to_string(),
             Hir::Var(v) => v.0.to_string(),
@@ -135,6 +183,7 @@ impl MirLowerer<'_> {
 
         let params = self.find_func_params(&func_name)?;
         let mut map_ids = Vec::new();
+        let mut forwarded_refs = Vec::new();
 
         let arg_ids = self.hir_list(args_hir_id);
 
@@ -150,7 +199,7 @@ impl MirLowerer<'_> {
         }
 
         let mut pos_idx = 0;
-        for (p_name, spread) in &params {
+        for (p_name, spread, is_ref) in &params {
             if *spread == 1 {
                 let mut list_ids = Vec::new();
                 while pos_idx < positional_args.len() {
@@ -173,15 +222,27 @@ impl MirLowerer<'_> {
                 map_ids.push(key_id);
                 map_ids.push(inner_map_id);
             } else {
-                let val = if let Some(v) = named_args.remove(p_name) {
-                    self.lower_expr(v)?
+                let (val, forwarded) = if let Some(v) = named_args.remove(p_name) {
+                    if *is_ref {
+                        self.lower_ref_arg_forwarding(v, p_name, &func_name)?
+                    } else {
+                        (self.lower_expr(v)?, None)
+                    }
                 } else if pos_idx < positional_args.len() {
                     let v = positional_args[pos_idx];
                     pos_idx += 1;
-                    self.lower_expr(v)?
+                    if *is_ref {
+                        self.lower_ref_arg_forwarding(v, p_name, &func_name)?
+                    } else {
+                        (self.lower_expr(v)?, None)
+                    }
                 } else {
-                    self.nop()
+                    (self.nop(), None)
                 };
+
+                if let Some(forward_pair) = forwarded {
+                    forwarded_refs.push(forward_pair);
+                }
 
                 let key_id = self.str_id(p_name);
                 map_ids.push(key_id);
@@ -195,6 +256,7 @@ impl MirLowerer<'_> {
             map_ids.push(ret);
         }
 
-        Ok(self.add(Mir::Map(map_ids.into_boxed_slice())))
+        let map_id = self.add(Mir::Map(map_ids.into_boxed_slice()));
+        Ok((map_id, forwarded_refs))
     }
 }

@@ -49,6 +49,7 @@ pub(super) fn dispatch<'a>(
         ActionId::SetVariableShiftLocationInDirection => shift_in_direction(rt, stream, op),
         ActionId::SetVariableShiftLocationOnVector => shift_on_vector(rt, stream, op),
         ActionId::SetVariableShiftLocationTowardsLocation => shift_towards(rt, stream, op),
+        ActionId::SetVariableGetBlockMaterial => get_block_material(rt, stream, op),
         _ => return None,
     })
 }
@@ -660,4 +661,24 @@ fn metric(from: [f64; 5], to: [f64; 5], mode: &str) -> f64 {
         "XZ" => two_d(from, to),
         _ => three_d(from, to),
     }
+}
+
+/// `set_variable_get_block_material`: получение типа блока в локации.
+#[tracing::instrument(level = "trace", skip(rt, stream, op))]
+pub(super) fn get_block_material<'a>(
+    rt: &mut Runtime<'a>,
+    stream: &mut Stream<'a>,
+    op: &'a Op<'a>,
+) -> Result<Flow> {
+    assign(rt, stream, op, |rt, stream, args| {
+        let loc = rt.optional_location_arg(stream, args, "location")?;
+        let Some([x, y, z, _, _]) = loc else {
+            return Ok(Some(value::text("minecraft:air")));
+        };
+        let bx = x.floor() as i64;
+        let by = y.floor() as i64;
+        let bz = z.floor() as i64;
+        let mat = rt.world().block_at(bx, by, bz).unwrap_or("minecraft:air");
+        Ok(Some(value::text(mat.to_owned())))
+    })
 }

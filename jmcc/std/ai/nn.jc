@@ -27,13 +27,10 @@ export class Layer {
         for o in 0..output_count {
             var row: array<number> = [];
             for i in 0..input_count {
-                row = variable::append_list(row, [variable::random_number(-100, 100) / 100]);
+                row.push(variable::random_number(-100, 100) / 100);
             }
-            self.weights = variable::append_list(self.weights, [row]);
-            self.biases = variable::append_list(
-                self.biases,
-                [variable::random_number(-100, 100) / 100],
-            );
+            self.weights.push(row);
+            self.biases.push(variable::random_number(-100, 100) / 100);
         }
         return self;
     }
@@ -63,7 +60,7 @@ export class Layer {
                 var inp = inputs[i];
                 sum += w * inp;
             }
-            outputs = variable::append_list(outputs, [self.sigmoid(sum)]);
+            outputs.push(self.sigmoid(sum));
         }
 
         self.last_outputs = outputs;
@@ -94,7 +91,7 @@ export class NeuralNetwork {
         var num_layers = variable::get_list_length(layer_sizes);
         for i in 0..num_layers - 1 {
             var layer = Layer(layer_sizes[i], layer_sizes[i + 1]);
-            self.layers = variable::append_list(self.layers, [layer]);
+            self.layers.push(layer);
         }
         return self;
     }
@@ -147,9 +144,9 @@ export class NeuralNetwork {
             var target = targets[o];
             var error = target - output;
             var delta = error * (output * (1 - output));
-            output_deltas = variable::append_list(output_deltas, [delta]);
+            output_deltas.push(delta);
         }
-        deltas = variable::append_list(deltas, [output_deltas]);
+        deltas.push(output_deltas);
 
         // Дельты для скрытых слоев
         var next_layer_deltas = output_deltas;
@@ -169,10 +166,10 @@ export class NeuralNetwork {
                     }
                     var output = current_layer.last_outputs[j];
                     var delta = error_sum * (output * (1 - output));
-                    hidden_deltas = variable::append_list(hidden_deltas, [delta]);
+                    hidden_deltas.push(delta);
                 }
 
-                deltas = variable::append_list(deltas, [hidden_deltas]);
+                deltas.push(hidden_deltas);
                 next_layer_deltas = hidden_deltas;
             }
         }

@@ -16,6 +16,9 @@ pub fn keyword(s: &str) -> Option<Token<'static>> {
         "класс" | "class" => Some(Token::Class),
         "перечисление" | "enum" => Some(Token::Enum),
         "встраиваемый" | "inline" => Some(Token::Inline),
+        "кэшированный" | "кешированный" | "кэш" | "кеш" | "cached" => {
+            Some(Token::Cached)
+        }
         "локальный" | "local" => Some(Token::Local),
         "игра" | "game" => Some(Token::Game),
         "сохранить" | "сохранение" | "save" => Some(Token::Save),

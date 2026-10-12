@@ -81,6 +81,49 @@ export class map<K, V> implements Iterable<K> {
     }
 
     /// RU:
+    /// Удаляет запись из карты по ключу.
+    /// EN:
+    /// Removes an entry from the map by key.
+    @alias("удалить")
+    inline function remove(self: map<K, V>, key: K) -> map<K, V> {
+        var removed: V;
+        variable::remove_map_entry(removed, self, self, key, []);
+        return self;
+    }
+
+    /// RU:
+    /// Очищает все записи карты.
+    /// EN:
+    /// Clears all entries from the map.
+    @alias("очистить")
+    inline function clear(self: map<K, V>) -> map<K, V> {
+        variable::clear_map(self);
+        return self;
+    }
+
+    /// RU:
+    /// Возвращает значение по ключу, либо значение по умолчанию.
+    /// EN:
+    /// Returns the value for key, or the default value if key is not found.
+    @alias("получить")
+    inline function get(self: map<K, V>, key: K, default_value: V) -> V {
+        return variable::get_map_value(self, key, default_value);
+    }
+
+    /// RU:
+    /// Сортирует карту по ключам или значениям в указанном порядке.
+    /// EN:
+    /// Sorts the map by keys or values in the specified order.
+    @alias("сортировать")
+    inline function sort(
+        self: map<K, V>,
+        order: text = "ASCENDING",
+        by: text = "KEYS",
+    ) -> map<K, V> {
+        return variable::sort_map(self, sort_order = order, sort_type = by);
+    }
+
+    /// RU:
     /// Возвращает количество записей в карте.
     /// EN:
     /// Returns the number of entries in the map.

@@ -5,6 +5,7 @@ use super::*;
 
 impl Formatter<'_> {
     #[instrument(skip(self, stmt), level = "trace")]
+    #[expect(clippy::too_many_lines, reason = "statement formatter dispatcher")]
     pub(super) fn fmt_stmt(&mut self, stmt: &Statement) {
         match stmt {
             Statement::Import(i) => self.fmt_import(i),
@@ -35,9 +36,6 @@ impl Formatter<'_> {
                     self.w(&format!("'{}: ", self.r(lbl)));
                 }
                 self.w("while ");
-                if w.is_not {
-                    self.w("not ");
-                }
                 self.fmt_expr(w.condition, 2);
                 self.w(" ");
                 self.fmt_block(&w.body);
@@ -103,6 +101,48 @@ impl Formatter<'_> {
             Statement::TryCatch(tc) => self.fmt_try_catch(tc),
             Statement::Throw(th) => self.fmt_throw(th),
             Statement::Interface(i) => self.fmt_interface(i),
+            Statement::Cfg(cfg, inner) => {
+                self.ind();
+                self.w("@cfg(");
+                self.fmt_cfg_expr(&cfg.expr);
+                self.w(")\n");
+                self.fmt_stmt(inner);
+            }
+        }
+    }
+
+    fn fmt_cfg_expr(&mut self, expr: &CfgExpr) {
+        match expr {
+            CfgExpr::Feature(f) => {
+                self.w(&format!("feature = \"{f}\""));
+            }
+            CfgExpr::All(exprs) => {
+                self.w("all(");
+                for (i, e) in exprs.iter().enumerate() {
+                    if i > 0 {
+                        self.w(", ");
+                    }
+                    self.fmt_cfg_expr(e);
+                }
+                self.w(")");
+            }
+            CfgExpr::Any(exprs) => {
+                self.w("any(");
+                for (i, e) in exprs.iter().enumerate() {
+                    if i > 0 {
+                        self.w(", ");
+                    }
+                    self.fmt_cfg_expr(e);
+                }
+                self.w(")");
+            }
+            CfgExpr::Not(inner) => {
+                self.w("not(");
+                self.fmt_cfg_expr(inner);
+                self.w(")");
+            }
+            CfgExpr::True => self.w("true"),
+            CfgExpr::False => self.w("false"),
         }
     }
 
@@ -110,9 +150,6 @@ impl Formatter<'_> {
     pub(super) fn fmt_if(&mut self, ifst: &IfStmt) {
         self.ind();
         self.w("if ");
-        if ifst.is_not {
-            self.w("not ");
-        }
         self.fmt_expr(ifst.condition, 2);
         self.w(" ");
         self.fmt_block(&ifst.then_body);
@@ -146,6 +183,9 @@ impl Formatter<'_> {
         self.ind();
         if v.is_exported {
             self.w("export ");
+        }
+        if v.is_cached {
+            self.w("cached ");
         }
 
         let mut i = 0;

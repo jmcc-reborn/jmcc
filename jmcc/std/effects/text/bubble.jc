@@ -26,7 +26,7 @@ export class Bubble {
     /// Asynchronously displays the bubble message following the player.
     @alias("показать")
     process show(self: Bubble, message: text, duration: number = 100) {
-        if self.is_active == true {
+        if self.is_active {
             self.remove();
         }
 
@@ -35,7 +35,7 @@ export class Bubble {
         }
 
         var formatted_message: text = "&b✉&8 »&7$message";
-        var loc: location = variable::shift_coordinate(value::eye_location<default>(), 0.5, "Y");
+        var loc: location = value::eye_location<default>().shift_coord(0.5, "Y");
 
         world::spawn_armor_stand(
             location = loc,
@@ -64,7 +64,7 @@ export class Bubble {
                 break;
             }
 
-            loc = variable::shift_coordinate(value::eye_location<default>(), 0.5, "Y");
+            loc = value::eye_location<default>().shift_coord(0.5, "Y");
             select::entity_by_name(self.entity_uuid);
             if entity::exists() {
                 entity::teleport(loc, keep_rotation = "FALSE");
@@ -81,7 +81,7 @@ export class Bubble {
     @alias("удалить")
     @alias("скрыть")
     function remove(self: Bubble) {
-        if self.is_active == true {
+        if self.is_active {
             select::entity_by_name(self.entity_uuid);
             if entity::exists() {
                 entity::remove();

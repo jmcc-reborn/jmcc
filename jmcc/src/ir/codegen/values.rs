@@ -23,7 +23,25 @@ impl CodeGen {
         ops: &mut Vec<Op<'static>>,
     ) -> CgResult<String> {
         Ok(match &e[id] {
-            Mir::Str(s) => s.0.to_string(),
+            Mir::Str(s) => {
+                let mut text = s.0.to_string();
+                for (old_name, new_val) in &self.var_aliases {
+                    let resolved = self.resolve_alias(new_val.clone());
+                    if let Value::Variable { variable, scope } = resolved {
+                        let new_placeholder = match scope {
+                            VariableScope::Local => format!("%var_local({variable})"),
+                            VariableScope::Line => format!("%var_line({variable})"),
+                            VariableScope::Global => format!("%var({variable})"),
+                            VariableScope::Save => format!("%var_save({variable})"),
+                        };
+                        text = text.replace(&format!("%var_line({old_name})"), &new_placeholder);
+                        text = text.replace(&format!("%var_local({old_name})"), &new_placeholder);
+                        text = text.replace(&format!("%var({old_name})"), &new_placeholder);
+                        text = text.replace(&format!("%var_save({old_name})"), &new_placeholder);
+                    }
+                }
+                text
+            }
             Mir::Num(n) => n.to_string(),
             Mir::Concat(ids) => {
                 let mut s = String::new();
@@ -238,6 +256,7 @@ impl CodeGen {
     ) -> CgResult<Value<'static>> {
         let value = self.emit_value(e, id, ops)?;
         let temp = self.fresh_temp();
+        ops.push(Op::variable_set_value(temp.clone(), ZERO.clone()));
         ops.push(Op::variable_equals(
             value,
             ZERO.clone(),
@@ -260,13 +279,48 @@ impl CodeGen {
             Mir::Local(v) => (*v, VariableScope::Local),
             _ => return Err(CodegenError::InvalidVariable(e[id].clone())),
         };
+        let unwrapped_inner = Self::unwrapped_variable_static(e, inner_id);
+        let is_aliased = match &e[unwrapped_inner] {
+            Mir::Var(v) => self.var_aliases.contains_key(v.0.as_str()),
+            _ => false,
+        };
         let inner = self.emit_value(e, inner_id, ops)?;
         match inner {
-            Value::Variable { variable, .. } => Ok(Value::Variable { variable, scope }),
-            Value::Text { text, .. } => Ok(Value::Variable {
-                variable: text,
-                scope,
-            }),
+            Value::Variable {
+                variable,
+                scope: var_scope,
+            } => {
+                let final_scope = if is_aliased {
+                    var_scope
+                } else if let Some(&known_scope) = self.var_scopes.get(variable.as_ref()) {
+                    if matches!(known_scope, VariableScope::Global | VariableScope::Save) {
+                        known_scope
+                    } else {
+                        scope
+                    }
+                } else {
+                    scope
+                };
+                Ok(Value::Variable {
+                    variable,
+                    scope: final_scope,
+                })
+            }
+            Value::Text { text, .. } => {
+                let final_scope = if let Some(&known_scope) = self.var_scopes.get(text.as_ref()) {
+                    if matches!(known_scope, VariableScope::Global | VariableScope::Save) {
+                        known_scope
+                    } else {
+                        scope
+                    }
+                } else {
+                    scope
+                };
+                Ok(Value::Variable {
+                    variable: text,
+                    scope: final_scope,
+                })
+            }
             _ => Ok(inner),
         }
     }

@@ -22,7 +22,7 @@ impl<'a> OverloadExpander<'a> {
 
         let ret_sym = self.fresh();
         let ret_var_raw = self.add(Hir::Var(VarName(ret_sym)));
-        let ret_var = self.add(Hir::Line(ret_var_raw));
+        let ret_var = self.wrap_scope(ret_var_raw, self.default_scope)?;
 
         self.scopes.push(HashMap::new());
         self.inline_vars_stack.push(
@@ -46,7 +46,7 @@ impl<'a> OverloadExpander<'a> {
             self.temp_n += 1;
 
             let p_var_raw = self.add(Hir::Var(VarName(fresh_sym)));
-            let p_var = self.add(Hir::Line(p_var_raw));
+            let p_var = self.wrap_scope(p_var_raw, self.default_scope)?;
 
             if let Some(ty_id) = &param.ty {
                 let ty_str = self.ast.strings.resolve(ty_id);
@@ -61,7 +61,7 @@ impl<'a> OverloadExpander<'a> {
                     p_sym,
                     ExpanderBinding::Var {
                         name: fresh_sym,
-                        scope: VarScope::Line,
+                        scope: self.default_scope,
                     },
                 );
 
@@ -95,8 +95,9 @@ impl<'a> OverloadExpander<'a> {
         let prev_ret = self.inline_return_var.take();
         self.inline_return_var = Some(ret_var);
 
+        let structured_body = crate::ast::structure_early_returns(&f.body);
         let mut body_ids = Vec::new();
-        for stmt in &f.body {
+        for stmt in &structured_body {
             body_ids.push(self.conv_ast_stmt(stmt)?);
         }
 
@@ -252,7 +253,6 @@ impl<'a> OverloadExpander<'a> {
     ) -> Result<Id> {
         let ty = Type::Class(def_id, vec![]);
         let is_single = self.ctx.is_single_field_class(class_info);
-        let receiver = self.fresh_instance(Some(class_info), slots, is_dict);
         let init = self.find_in_classes(&ty, |class| class.methods.get("__init__").cloned());
         if let Some(f) = init {
             let has_self = f
@@ -267,10 +267,18 @@ impl<'a> OverloadExpander<'a> {
             return self.emit_call(&f, &call.args, receiver);
         }
         let (ids, bindings) = self.conv_ast_loose_args(&call.args)?;
-        let result = if is_single && !ids.is_empty() {
-            ids[0]
+        let result = if is_single {
+            let zero = self.add(Hir::Num(0.0.into()));
+            ids.first().copied().unwrap_or(zero)
+        } else if is_dict {
+            self.fresh_instance(Some(class_info), slots, is_dict)
         } else {
-            receiver
+            let zero = self.add(Hir::Num(0.0.into()));
+            let mut slot_ids = vec![zero; slots];
+            for (idx, &arg_id) in ids.iter().enumerate().take(slots) {
+                slot_ids[idx] = arg_id;
+            }
+            self.add(Hir::List(slot_ids.into_boxed_slice()))
         };
         Ok(self.wrap_lets(result, bindings))
     }
@@ -381,7 +389,9 @@ impl<'a> OverloadExpander<'a> {
             }
             let name = self.fresh();
             let raw = self.add(Hir::Var(VarName(name)));
-            let var = self.add(Hir::Line(raw));
+            let var = self
+                .wrap_scope(raw, self.default_scope)
+                .expect("valid default scope");
             bindings.push((var, id));
             result.push(var);
         }

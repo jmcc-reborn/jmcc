@@ -166,25 +166,8 @@ impl MirLowerer<'_> {
 
             let mut val = self.lower_expr(val_id)?;
 
-            let mut target_arg =
+            let target_arg =
                 resolve_action_arg_def(name.as_deref(), def, &mut used_params, &mut positional_idx);
-
-            if let Some(t_arg) = target_arg
-                && t_arg.arg_type == "variable"
-            {
-                let is_var_expr = matches!(
-                    &self.hir[val_id],
-                    Hir::Var(_) | Hir::Local(_) | Hir::Game(_) | Hir::Save(_) | Hir::Line(_)
-                );
-                if !is_var_expr {
-                    target_arg = resolve_action_arg_def(
-                        name.as_deref(),
-                        def,
-                        &mut used_params,
-                        &mut positional_idx,
-                    );
-                }
-            }
 
             if let Some(t_arg) = target_arg
                 && t_arg.arg_type == "enum"

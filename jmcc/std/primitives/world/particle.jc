@@ -165,10 +165,8 @@ export class particle {
     /// EN: Sets particle spread.
     @alias("разброс")
     @setter
-    inline function spread(self: particle, spread: array) -> particle {
-        var horizontal = variable::get_list_value(spread, 0);
-        var vertical = variable::get_list_value(spread, 1);
-        return self.set_particle_spread(horizontal, vertical);
+    inline function spread(self: particle, spread: array<number>) -> particle {
+        return self.set_particle_spread(spread[0], spread[1]);
     }
 
     /// RU: Установка горизонтального разброса.

@@ -32,6 +32,7 @@ impl Parser<'_> {
     #[instrument(skip(self), level = "trace")]
     #[expect(
         clippy::too_many_lines,
+        clippy::cognitive_complexity,
         reason = "parsing top level statements and decorators"
     )]
     pub(super) fn parse_statement(&mut self) -> Result<Statement> {
@@ -47,6 +48,7 @@ impl Parser<'_> {
         let mut expected_panic = None;
         let mut is_ignore = false;
         let mut ignore_reason = None;
+        let mut cfgs = Vec::new();
 
         while self.is_token(Token::At) {
             self.bump();
@@ -54,6 +56,15 @@ impl Parser<'_> {
             let name_str = self.interner.resolve(&name);
             trace!("Parsed decorator: {name_str}");
             match name_str {
+                "cfg" | "кфг" => {
+                    let start_span = self.last_span();
+                    let cfg_expr = self.parse_cfg_decorator()?;
+                    let end_span = self.last_span().end;
+                    cfgs.push(CfgAttr {
+                        expr: cfg_expr,
+                        span: start_span.start..end_span,
+                    });
+                }
                 "getter" | "геттер" => is_getter = true,
                 "setter" | "сеттер" => is_setter = true,
                 "overload" | "перегрузка" => is_overload = true,
@@ -104,8 +115,8 @@ impl Parser<'_> {
             ignore_reason,
         });
 
-        if self.is_token(Token::Export) {
-            return self.parse_export_stmt(ExportModifiers {
+        let mut stmt = if self.is_token(Token::Export) {
+            self.parse_export_stmt(ExportModifiers {
                 is_getter,
                 is_setter,
                 lang_item,
@@ -113,80 +124,124 @@ impl Parser<'_> {
                 is_overload,
                 aliases,
                 test_attr,
-            });
-        }
-        let label = if let Some(Token::LabelDecl(lbl)) = self.curr_token() {
-            let label_id = self.interner.get_or_intern(lbl);
-            self.bump();
-            Some(label_id)
+            })?
         } else {
-            None
-        };
-
-        match self.curr_token() {
-            Some(Token::Import) => self.parse_import_stmt(),
-            Some(Token::Function | Token::Fun | Token::Def) => self.parse_function_decl(
-                false,
-                is_getter,
-                is_setter,
-                is_overload,
-                aliases,
-                test_attr,
-            ),
-            Some(Token::Process) => self.parse_process_stmt(aliases),
-            Some(Token::Event) => self.parse_event_stmt(),
-            Some(Token::Class) => self.parse_class_stmt(false, lang_item, is_dict, aliases),
-            Some(Token::Interface) => self.parse_interface_stmt(aliases),
-            Some(Token::Enum) => self.parse_enum_stmt(false, aliases),
-            Some(Token::TypeAlias) => self.parse_type_alias_stmt(aliases),
-            Some(Token::If) => self.parse_if_stmt(),
-            Some(Token::While) => self.parse_while_stmt(label),
-            Some(Token::For) => self.parse_for_stmt(label),
-            Some(Token::Match) => self.parse_match_stmt(),
-            Some(Token::Try) => self.parse_try_catch_stmt(),
-            Some(Token::Throw) => self.parse_throw_stmt(),
-            Some(Token::Break) => self.parse_break_stmt(),
-            Some(Token::Return | Token::Continue)
-                if self.edition < 2026
-                    && matches!(
-                        self.peek_token(),
-                        Some(
-                            Token::Assign
-                                | Token::AddAssign
-                                | Token::SubAssign
-                                | Token::MulAssign
-                                | Token::DivAssign
-                                | Token::ModAssign
-                                | Token::PowAssign
-                        )
-                    ) =>
-            {
-                self.parse_var_decl_or_expr_stmt()
-            }
-            Some(Token::Return) => self.parse_return_stmt(),
-            Some(Token::Continue) => self.parse_continue_stmt(),
-            Some(Token::Inline)
-                if matches!(
-                    self.peek_token(),
-                    Some(Token::Function | Token::Fun | Token::Def)
-                ) =>
-            {
+            let label = if let Some(Token::LabelDecl(lbl)) = self.curr_token() {
+                let label_id = self.interner.get_or_intern(lbl);
                 self.bump();
-                self.parse_function_decl(
-                    true,
+                Some(label_id)
+            } else {
+                None
+            };
+
+            match self.curr_token() {
+                Some(Token::Import) => self.parse_import_stmt()?,
+                Some(Token::Function | Token::Fun | Token::Def) => self.parse_function_decl(
+                    false,
                     is_getter,
                     is_setter,
                     is_overload,
                     aliases,
                     test_attr,
-                )
+                )?,
+                Some(Token::Process) => self.parse_process_stmt(aliases)?,
+                Some(Token::Event) => self.parse_event_stmt()?,
+                Some(Token::Class) => {
+                    self.parse_class_stmt(false, false, lang_item, is_dict, aliases)?
+                }
+                Some(Token::Interface) => self.parse_interface_stmt(aliases)?,
+                Some(Token::Enum) => self.parse_enum_stmt(false, aliases)?,
+                Some(Token::TypeAlias) => self.parse_type_alias_stmt(aliases)?,
+                Some(Token::If) => self.parse_if_stmt()?,
+                Some(Token::While) => self.parse_while_stmt(label)?,
+                Some(Token::For) => self.parse_for_stmt(label)?,
+                Some(Token::Match) => self.parse_match_stmt()?,
+                Some(Token::Try) => self.parse_try_catch_stmt()?,
+                Some(Token::Throw) => self.parse_throw_stmt()?,
+                Some(Token::Break) => self.parse_break_stmt()?,
+                Some(Token::Return | Token::Continue)
+                    if self.edition < 2026
+                        && matches!(
+                            self.peek_token(),
+                            Some(
+                                Token::Assign
+                                    | Token::AddAssign
+                                    | Token::SubAssign
+                                    | Token::MulAssign
+                                    | Token::DivAssign
+                                    | Token::ModAssign
+                                    | Token::PowAssign
+                            )
+                        ) =>
+                {
+                    self.parse_var_decl_or_expr_stmt()?
+                }
+                Some(Token::Return) => self.parse_return_stmt()?,
+                Some(Token::Continue) => self.parse_continue_stmt()?,
+                Some(Token::Inline | Token::Cached) => {
+                    let is_modifier = matches!(
+                        self.peek_token(),
+                        Some(
+                            Token::Function
+                                | Token::Fun
+                                | Token::Def
+                                | Token::Class
+                                | Token::Inline
+                                | Token::Cached
+                                | Token::Var
+                                | Token::Const
+                                | Token::Local
+                                | Token::Line
+                                | Token::Game
+                                | Token::Save
+                                | Token::Ident(_)
+                                | Token::DQuote
+                                | Token::SQuote
+                                | Token::BQuote
+                                | Token::Mod
+                        )
+                    );
+                    if !is_modifier {
+                        self.parse_var_decl_or_expr_stmt()?
+                    } else {
+                        let mut is_inline = false;
+                        let mut is_cached = false;
+                        while matches!(self.curr_token(), Some(Token::Inline | Token::Cached)) {
+                            if self.eat(Token::Inline) {
+                                is_inline = true;
+                            } else if self.eat(Token::Cached) {
+                                is_cached = true;
+                            }
+                        }
+                        if matches!(
+                            self.curr_token(),
+                            Some(Token::Function | Token::Fun | Token::Def)
+                        ) {
+                            self.parse_function_decl(
+                                is_inline,
+                                is_getter,
+                                is_setter,
+                                is_overload,
+                                aliases,
+                                test_attr,
+                            )?
+                        } else if matches!(self.curr_token(), Some(Token::Class)) {
+                            self.parse_class_stmt(
+                                is_inline, is_cached, lang_item, is_dict, aliases,
+                            )?
+                        } else {
+                            self.parse_var_decl_or_expr_stmt_with_cached(is_cached)?
+                        }
+                    }
+                }
+                _ => self.parse_var_decl_or_expr_stmt()?,
             }
-            Some(Token::Inline) if matches!(self.peek_token(), Some(Token::Class)) => {
-                self.bump();
-                self.parse_class_stmt(true, lang_item, is_dict, aliases)
-            }
-            _ => self.parse_var_decl_or_expr_stmt(),
+        };
+
+        for cfg in cfgs.into_iter().rev() {
+            stmt = Statement::Cfg(cfg, Box::new(stmt));
         }
+        Ok(stmt)
     }
 
     #[instrument(skip(self), level = "trace")]
@@ -210,9 +265,43 @@ impl Parser<'_> {
     }
 
     #[instrument(skip(self, modifiers), level = "trace")]
-    fn parse_export_stmt(&mut self, modifiers: ExportModifiers) -> Result<Statement> {
+    fn parse_export_stmt(&mut self, mut modifiers: ExportModifiers) -> Result<Statement> {
         self.bump();
-        let is_inline = self.eat(Token::Inline);
+        let mut is_inline = false;
+        let mut is_cached = false;
+        while matches!(self.curr_token(), Some(Token::Inline | Token::Cached)) {
+            if self.eat(Token::Inline) {
+                is_inline = true;
+            } else if self.eat(Token::Cached) {
+                is_cached = true;
+            }
+        }
+        let mut export_cfgs = Vec::new();
+
+        while self.is_token(Token::At) {
+            self.bump();
+            let name = self.parse_ident_str()?;
+            let name_str = self.interner.resolve(&name);
+            match name_str {
+                "cfg" | "кфг" => {
+                    let start_span = self.last_span();
+                    let cfg_expr = self.parse_cfg_decorator()?;
+                    let end_span = self.last_span().end;
+                    export_cfgs.push(CfgAttr {
+                        expr: cfg_expr,
+                        span: start_span.start..end_span,
+                    });
+                }
+                "getter" | "геттер" => modifiers.is_getter = true,
+                "setter" | "сеттер" => modifiers.is_setter = true,
+                "overload" | "перегрузка" => modifiers.is_overload = true,
+                "alias" | "алиас" => {
+                    let parsed = self.parse_alias_decorator()?;
+                    modifiers.aliases.extend(parsed);
+                }
+                _ => {}
+            }
+        }
 
         let mut stmt = match self.curr_token() {
             Some(Token::Function | Token::Fun | Token::Def) => self.parse_function_decl(
@@ -224,9 +313,12 @@ impl Parser<'_> {
                 modifiers.test_attr,
             )?,
             Some(Token::Process) => self.parse_process_stmt(modifiers.aliases)?,
-            Some(Token::Var | Token::Const) => self.parse_var_decl_or_expr_stmt()?,
+            Some(Token::Var | Token::Const) => {
+                self.parse_var_decl_or_expr_stmt_with_cached(is_cached)?
+            }
             Some(Token::Class) => self.parse_class_stmt(
                 is_inline,
+                is_cached,
                 modifiers.lang_item,
                 modifiers.is_dict,
                 modifiers.aliases,
@@ -234,6 +326,7 @@ impl Parser<'_> {
             Some(Token::Interface) => self.parse_interface_stmt(modifiers.aliases)?,
             Some(Token::TypeAlias) => self.parse_type_alias_stmt(modifiers.aliases)?,
             Some(Token::Enum) => self.parse_enum_stmt(true, modifiers.aliases)?,
+            _ if is_cached => self.parse_var_decl_or_expr_stmt_with_cached(is_cached)?,
             _ => {
                 return Err(JmccError::UnexpectedToken {
                     expected: "declaration after 'export'".into(),
@@ -256,6 +349,10 @@ impl Parser<'_> {
                         .into(),
                 ));
             }
+        }
+
+        for cfg in export_cfgs.into_iter().rev() {
+            stmt = Statement::Cfg(cfg, Box::new(stmt));
         }
         Ok(stmt)
     }
@@ -344,6 +441,80 @@ impl Parser<'_> {
             self.parse_string_value()
         } else {
             self.parse_ident_str()
+        }
+    }
+
+    fn parse_cfg_decorator(&mut self) -> Result<CfgExpr> {
+        self.expect(Token::LParen)?;
+        let expr = self.parse_cfg_expr()?;
+        self.expect(Token::RParen)?;
+        Ok(expr)
+    }
+
+    fn parse_cfg_expr(&mut self) -> Result<CfgExpr> {
+        if matches!(
+            self.curr_token(),
+            Some(Token::DQuote | Token::SQuote | Token::BQuote)
+        ) {
+            let s = self.parse_string_value()?;
+            let feat_str = self.interner.resolve(&s).to_owned();
+            return Ok(CfgExpr::Feature(feat_str));
+        }
+
+        let ident = self.parse_ident_str()?;
+        let ident_str = self.interner.resolve(&ident).to_owned();
+        match ident_str.as_str() {
+            "feature" | "фича" => {
+                if !self.eat(Token::Assign) && !self.eat(Token::Colon) {
+                    return Err(JmccError::Generic(format!(
+                        "Expected '=' or ':' after '{ident_str}' in @cfg"
+                    )));
+                }
+                let feat_str = if matches!(
+                    self.curr_token(),
+                    Some(Token::DQuote | Token::SQuote | Token::BQuote)
+                ) {
+                    let s = self.parse_string_value()?;
+                    self.interner.resolve(&s).to_owned()
+                } else {
+                    let s = self.parse_ident_str()?;
+                    self.interner.resolve(&s).to_owned()
+                };
+                Ok(CfgExpr::Feature(feat_str))
+            }
+            "not" | "не" => {
+                self.expect(Token::LParen)?;
+                let inner = self.parse_cfg_expr()?;
+                self.expect(Token::RParen)?;
+                Ok(CfgExpr::Not(Box::new(inner)))
+            }
+            "all" | "все" => {
+                self.expect(Token::LParen)?;
+                let mut exprs = Vec::new();
+                while !self.is_token(Token::RParen) && !self.is_eof() {
+                    exprs.push(self.parse_cfg_expr()?);
+                    if !self.eat(Token::Comma) {
+                        break;
+                    }
+                }
+                self.expect(Token::RParen)?;
+                Ok(CfgExpr::All(exprs))
+            }
+            "any" | "любой" | "любая" => {
+                self.expect(Token::LParen)?;
+                let mut exprs = Vec::new();
+                while !self.is_token(Token::RParen) && !self.is_eof() {
+                    exprs.push(self.parse_cfg_expr()?);
+                    if !self.eat(Token::Comma) {
+                        break;
+                    }
+                }
+                self.expect(Token::RParen)?;
+                Ok(CfgExpr::Any(exprs))
+            }
+            other => Err(JmccError::Generic(format!(
+                "Unknown @cfg parameter or predicate '{other}', expected 'feature' (or 'фича')"
+            ))),
         }
     }
 
@@ -453,10 +624,18 @@ impl Parser<'_> {
         }))
     }
 
-    #[instrument(skip(self, is_inline, lang_item, is_dict, aliases), level = "trace")]
+    #[instrument(
+        skip(self, is_inline, is_cached, lang_item, is_dict, aliases),
+        level = "trace"
+    )]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "decorator flags for class definition"
+    )]
     fn parse_class_stmt(
         &mut self,
         is_inline: bool,
+        is_cached: bool,
         lang_item: bool,
         is_dict: bool,
         aliases: Vec<StrId>,
@@ -493,6 +672,7 @@ impl Parser<'_> {
             implements,
             body,
             is_inline,
+            is_cached,
             lang_item,
             is_dict,
             is_exported: false,

@@ -66,15 +66,14 @@ export function join_lines(lines: array<text>, separator: text = "\n") -> text {
     return lines.join(separator);
 }
 
-/// RU: Заменяет подстроку в тексте без регулярных выражений.
-/// EN: Simple non-regex text replacement using split + join.
+/// RU: Заменяет подстроку в тексте.
+/// EN: Replaces substring in text using native replace.
 @alias("заменить_в_тексте")
 export function replace_in_text(source: text, search: text, replacement: text) -> text {
     if search == "" {
         return source;
     }
-    var parts = source.split(search);
-    return join_lines(parts, separator = replacement);
+    return source.replace(search, replacement);
 }
 
 /// RU: Универсальный класс таблицы лидеров.
@@ -172,8 +171,7 @@ export class Leaderboard {
 
     /// Removes a player from the leaderboard.
     function remove_player(self: Leaderboard, player: text) {
-        var temp: any = 0;
-        self.scores = variable::remove_map_entry(temp, self.scores, player);
+        self.scores.remove(player);
     }
 
     /// Clears all scores.
@@ -194,7 +192,7 @@ export class Leaderboard {
         if self.sort_order == SortOrder.ASCENDING {
             order = "ASCENDING";
         }
-        self.scores = variable::sort_map(self.scores, sort_order = order, sort_type = "VALUES");
+        self.scores = self.scores.sort(order, "VALUES");
         self.sorted_keys = self.scores.keys();
     }
 
@@ -495,8 +493,7 @@ export class LeaderboardManager {
         if self.leaderboards.has_key(id) {
             var lb = self.leaderboards[id];
             lb.remove();
-            var temp: any = 0;
-            self.leaderboards = variable::remove_map_entry(temp, self.leaderboards, id);
+            self.leaderboards.remove(id);
         }
     }
 

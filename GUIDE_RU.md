@@ -53,10 +53,14 @@ edition = 2026
 
 [profile.dev]
 opt_level = 1
+debug_time = true
+minify = false
 
 [profile.release]
 opt_level = 3
 emit = ["json"]
+debug_time = false
+minify = true
 ```
 
 ### 2.2. Пишем первый код (`src/main.jc`)
@@ -534,6 +538,43 @@ event<player_join> {
 }
 ```
 
+### 8.4. Кэшированные классы и поля (Оптимизация сквозной записи)
+По умолчанию чтение свойства объекта `p.x` генерирует серверное действие `get_list_value` для извлечения значения из внутреннего списка. В циклах и обработчиках событий с частыми обращениями к полям это приводит к раздуванию JSON и избыточным операциям.
+
+Объявление класса или отдельных полей с модификатором `cached` (или русскими аналогами `кэшированный`, `кешированный`, `кэш`, `кеш`) включает **кэширование со сквозной записью (write-through)**:
+
+```jc
+// Все поля класса Point кэшируются
+cached class Point {
+    var x: number;
+    var y: number;
+
+    function __init__(self: Point, x: number, y: number) -> Point {
+        self.x = x;
+        self.y = y;
+        return self;
+    }
+}
+
+// Или кэширование отдельных полей:
+class State {
+    cached id: number;
+    hp: number; // обычное поле, читается через get_list_value
+}
+
+event<world_start> {
+    var p = Point(10, 20);
+
+    // Первое чтение загружает p.x из списка в локальную переменную %line%__cache_p_x
+    // Последующие чтения используют эту переменную напрямую без get_list_value!
+    var dist = p.x * p.x + p.y * p.y;
+
+    // Запись обновляет И список на сервере, И локальную переменную кэша (write-through),
+    // гарантируя потокобезопасность между асинхронными событиями без гонок данных!
+    p.x = 42;
+}
+```
+
 ---
 
 ## 9. Программирование для JustMC (Minecraft)
@@ -650,6 +691,81 @@ function test_zero_div() {
 jmcc test
 ```
 Компилятор прогонит все тесты в виртуальной среде `jmcmock` и покажет подробный отчёт о результатах.
+
+### 10.3. Условная компиляция и фичи (`@cfg`, `[features]`)
+
+JustCode поддерживает условную компиляцию на этапе сборки через декоратор `@cfg(feature = "...")` (или `@cfg(фича = "...")`) и управление фичами в `jmcc.toml`.
+
+#### Настройка фичей в `jmcc.toml`
+
+Объявляйте опциональные зависимости и фичи в `jmcc.toml`:
+
+```toml
+[package]
+name = "my_game"
+version = "0.1.0"
+edition = 2026
+
+[dependencies]
+base_lib = { path = "../base_lib" }
+economy_lib = { path = "../economy_lib", optional = true }
+
+[features]
+default = ["economy"]
+economy = ["dep:economy_lib"]
+admin_tools = []
+```
+
+- `optional = true`: зависимость не загружается и не компилируется, пока не будет явно включена фичей через `dep:<имя>`. В отличие от Cargo, `optional = true` **не** создаёт неявную публичную фичу.
+- `[features].default`: список фичей, активных по умолчанию.
+- Проброс фичей в зависимости: `feature_name = ["dep_name/sub_feature"]`.
+
+#### Использование `@cfg` в JustCode
+
+Применяйте `@cfg(...)` к любым объявлениям (импорты, функции, классы, тайпалиасы) или стейтментам:
+
+```jc
+@cfg(feature = "economy")
+import "economy_lib";
+
+@cfg(feature = "admin_tools")
+function ban_player(target: player) {
+    // Компилируется только при активной фиче admin_tools
+}
+
+function give_reward(p: player) {
+    @cfg(feature = "economy")
+    economy_lib::deposit(p, 100);
+
+    player::message<p>("Награда выдана!");
+}
+```
+
+Русский синтаксис поддерживается полностью:
+```jc
+@cfg(фича = "экономика")
+функция начислить(игрок: игрок) { ... }
+
+@cfg(все(фича = "а", фича = "б"))
+@cfg(любой(фича = "а", фича = "б"))
+@cfg(не(фича = "в"))
+```
+
+#### Компиляция с фичами
+
+```bash
+# Сборка со стандартными (default) фичами
+jmcc compile
+
+# Включение конкретных фичей
+jmcc compile -F admin_tools
+
+# Отключение стандартных фичей и выбор других
+jmcc compile --no-default-features -F economy
+
+# Включение всех фичей проекта
+jmcc compile --all-features
+```
 
 ---
 

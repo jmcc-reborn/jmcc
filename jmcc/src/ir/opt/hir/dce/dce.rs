@@ -43,9 +43,25 @@ fn extract_vars_from_str(s: &str, vars: &mut HashSet<Symbol>) {
         } else {
             continue;
         };
-        if let Some(end) = after_prefix.find(')') {
+        let mut depth = 1;
+        let mut end = 0;
+        for (i, b) in after_prefix.bytes().enumerate() {
+            if b == b'(' {
+                depth += 1;
+            } else if b == b')' {
+                depth -= 1;
+                if depth == 0 {
+                    end = i;
+                    break;
+                }
+            }
+        }
+        if depth == 0 {
             let var_name = &after_prefix[..end];
             vars.insert(Symbol::from(var_name));
+            if var_name.contains("%var") {
+                extract_vars_from_str(var_name, vars);
+            }
             remainder = &after_prefix[end + 1..];
         }
     }
@@ -73,7 +89,14 @@ fn collect_read_vars(expr: &RecExpr<Hir>) -> HashSet<Symbol> {
                 stack.push(*val);
                 stack.push(*body);
             }
-            Hir::VarDecl([_, val]) => stack.push(*val),
+            Hir::VarDecl([target, val]) => {
+                walk_subtree_with(expr, *target, |node, _, _| {
+                    if let Hir::Str(s) = node {
+                        extract_vars_from_str(s.0.as_str(), &mut read_vars);
+                    }
+                });
+                stack.push(*val);
+            }
             // Variable assignment does not read the write target — only the value.
             // Targets of other kinds (e.g. fields) are read as ordinary expressions.
             Hir::Set([target, val]) => {
@@ -82,6 +105,12 @@ fn collect_read_vars(expr: &RecExpr<Hir>) -> HashSet<Symbol> {
                     Hir::Var(_) | Hir::Local(_) | Hir::Game(_) | Hir::Save(_) | Hir::Line(_)
                 ) {
                     stack.push(*target);
+                } else {
+                    walk_subtree_with(expr, *target, |node, _, _| {
+                        if let Hir::Str(s) = node {
+                            extract_vars_from_str(s.0.as_str(), &mut read_vars);
+                        }
+                    });
                 }
                 stack.push(*val);
             }

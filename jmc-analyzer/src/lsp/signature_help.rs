@@ -26,8 +26,10 @@ pub fn provide_signature_help(
     let line_prefix = get_line_prefix(text, pos);
     let (target_ident, active_param) = parse_call_context(&line_prefix)?;
 
-    // 1. Check if it's an action call (e.g. `player::message` or `player::send_message`)
-    if let Some((obj, action)) = target_ident.split_once("::")
+    // 1. Check if it's an action call (e.g. `player::message` or `player.send_message`)
+    if let Some((obj, action)) = target_ident
+        .split_once("::")
+        .or_else(|| target_ident.split_once('.'))
         && let Some(def) = get_action_def(obj, action)
             .or_else(|| get_action_def(obj, action.strip_prefix("send_").unwrap_or(action)))
     {
@@ -143,8 +145,16 @@ pub fn provide_signature_help(
 fn get_line_prefix(text: &str, pos: Position) -> String {
     for (current_line, line) in text.split('\n').enumerate() {
         if current_line as u32 == pos.line {
-            let col = (pos.character as usize).min(line.len());
-            return line[..col].to_string();
+            let clean_line = line.trim_end_matches('\r');
+            let mut utf16_count = 0;
+            let target_utf16 = pos.character as usize;
+            for (idx, ch) in clean_line.char_indices() {
+                if utf16_count >= target_utf16 {
+                    return clean_line[..idx].to_string();
+                }
+                utf16_count += ch.len_utf16();
+            }
+            return clean_line.to_string();
         }
     }
     String::new()
@@ -180,9 +190,9 @@ fn parse_call_context(prefix: &str) -> Option<(String, usize)> {
     let paren_pos = open_paren_idx?;
     let before_paren = prefix[..paren_pos].trim_end();
 
-    // Extract identifier before paren (handles `player::send_message` or `foo`)
+    // Extract identifier before paren (handles `player::send_message` or `player.send_message` or `foo`)
     let ident_start = before_paren
-        .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != ':')
+        .rfind(|c: char| !c.is_alphanumeric() && c != '_' && c != ':' && c != '.')
         .map_or(0, |idx| idx + 1);
 
     let ident = before_paren[ident_start..].trim();

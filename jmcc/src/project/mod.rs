@@ -193,6 +193,22 @@ impl Project {
         locked: bool,
         offline: bool,
     ) -> Result<PackageGraph> {
+        let default_feats = self.manifest.default_features();
+        self.resolve_dependencies_with_features(include_dev, locked, offline, &default_feats)
+    }
+
+    /// Recursively resolves all project dependencies with active features.
+    ///
+    /// # Errors
+    /// Returns an error if dependencies cannot be resolved, network access is required in offline mode,
+    /// or if `--locked` was specified and lockfile is missing or out of date.
+    pub fn resolve_dependencies_with_features(
+        &self,
+        include_dev: bool,
+        locked: bool,
+        offline: bool,
+        requested_features: &[String],
+    ) -> Result<PackageGraph> {
         let lock_path = self.lockfile_path();
         let existing_lockfile = self.load_lockfile()?;
 
@@ -207,7 +223,12 @@ impl Project {
             .with_lockfile(existing_lockfile.clone())
             .with_offline(offline);
 
-        let graph = resolver.resolve_all(&self.manifest, &self.root_dir, include_dev)?;
+        let graph = resolver.resolve_all_with_features(
+            &self.manifest,
+            &self.root_dir,
+            include_dev,
+            requested_features,
+        )?;
         let new_lock = Lockfile::generate(&self.manifest, &self.root_dir, &graph);
 
         if locked {

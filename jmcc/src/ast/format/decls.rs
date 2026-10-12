@@ -190,6 +190,7 @@ impl Formatter<'_> {
         self.fmt_decl_start(
             [
                 c.is_exported.then_some("export "),
+                c.is_cached.then_some("cached "),
                 c.is_inline.then_some("inline "),
             ],
             "class ",

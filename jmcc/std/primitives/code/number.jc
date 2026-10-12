@@ -45,7 +45,7 @@ export class number {
 
     @setter
     inline function __iremainder__(self: number, second: number) -> number {
-        self = variable::remainder(self, second, "MODULO");
+        return self = variable::remainder(self, second, "MODULO");
     }
 
     inline function __pow__(first: number, second: number) -> number {
@@ -54,7 +54,7 @@ export class number {
 
     @setter
     inline function __ipow__(self: number, second: number) -> number {
-        self = variable::pow(self, second);
+        return self = variable::pow(self, second);
     }
 
     inline function __equals__(first: number, second: number) -> boolean {
@@ -144,6 +144,24 @@ export class number {
     @alias("косинус")
     inline function cos(self: number) -> number {
         return variable::cosine(self, variant = "COSINE", input = "RADIANS");
+    }
+
+    /// RU:
+    /// Вычисляет тангенс числа (в радианах).
+    /// EN:
+    /// Computes the tangent of the number in radians.
+    @alias("тангенс")
+    inline function tan(self: number) -> number {
+        return variable::tangent(self, variant = "TANGENT", input = "RADIANS");
+    }
+
+    /// RU:
+    /// Ограничивает число диапазоном [min, max].
+    /// EN:
+    /// Clamps the number to the range [min, max].
+    @alias("ограничить")
+    inline function clamp(self: number, min: number, max: number) -> number {
+        return variable::clamp(self, min, max);
     }
 
     /// RU:

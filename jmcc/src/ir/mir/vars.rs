@@ -122,9 +122,11 @@ impl MirLowerer<'_> {
 
     /// Binds the assignment target to the `variable` slot of an in-place action,
     /// avoiding an intermediate temporary and redundant `set_value`.
-    fn bind_in_place_target(&mut self, value_id: Id, target: Id) -> Option<Id> {
+    pub(super) fn bind_in_place_target(&mut self, value_id: Id, target: Id) -> Option<Id> {
         let (act_node_id, temp) = match &self.nodes.as_slice()[usize::from(value_id)] {
-            Mir::Let([temp, act_id, body]) if *temp == *body => (*act_id, *temp),
+            Mir::Let([temp, act_id, body]) if self.same_var_symbol(*temp, *body) => {
+                (*act_id, *temp)
+            }
             _ => return None,
         };
 

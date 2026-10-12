@@ -195,8 +195,7 @@ impl OverloadExpander<'_> {
         if let Some(slot) = slot {
             let target = self.conv_ast_expr(p.object)?;
             let index = self.add(Hir::Num((slot as f64).into()));
-            let args = self.add(Hir::List(vec![target, index].into_boxed_slice()));
-            return Ok(self.variable_action("get_list_value", args));
+            return Ok(self.add(Hir::Index([target, index])));
         }
 
         if self
@@ -256,9 +255,8 @@ impl OverloadExpander<'_> {
         if let Some(slot) = slot {
             let target = self.conv_ast_expr(p.object)?;
             let index = self.add(Hir::Num((slot as f64).into()));
-            let args = self.add(Hir::List(vec![target, index, val].into_boxed_slice()));
-            let action = self.variable_action("set_list_value", args);
-            return Ok(Some(self.add(Hir::Set([target, action]))));
+            let index_node = self.add(Hir::Index([target, index]));
+            return Ok(Some(self.add(Hir::Set([index_node, val]))));
         }
 
         if self

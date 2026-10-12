@@ -1,7 +1,7 @@
 //! Redundant Else Elimination pass: removes `else` branches that set a variable to 0
 //! when the code is not inside a loop, as line variables are reset to 0 on function entry.
 
-use super::common::{is_set_value_action, node_str_eq};
+use super::common::{extract_var_value_args, get_variable_name, is_set_value_action, node_str_eq};
 use crate::ir::arena::NodeArena;
 use crate::ir::mir::Mir;
 use crate::ir::opt::FunctionPass;
@@ -29,21 +29,26 @@ fn is_set_zero_in_else(expr: &RecExpr<Mir>, else_id: Id) -> bool {
     if ops.len() != 1 || !is_set_value_action(expr, ops[0]) {
         return false;
     }
-    let Mir::Action(set_ids) = &expr[ops[0]] else {
-        return false;
-    };
-    let Mir::List(args) = &expr[set_ids[3]] else {
+    let Some((var_id, val_id)) = extract_var_value_args(expr, ops[0]) else {
         return false;
     };
 
-    args.iter()
-        .find_map(|&arg_id| match &expr[arg_id] {
-            Mir::Named([name_id, value_id]) if node_str_eq(&expr[*name_id], "value") => {
-                Some(*value_id)
-            }
-            _ => None,
-        })
-        .is_some_and(|value_id| matches!(&expr[value_id], Mir::Num(n) if n.0 == 0.0))
+    // Value must be 0.0
+    if !matches!(&expr[val_id], Mir::Num(n) if n.0 == 0.0) {
+        return false;
+    }
+
+    // Must be a Line variable (not Game, Save, or Local)
+    if !matches!(&expr[var_id], Mir::Line(_)) {
+        return false;
+    }
+
+    // Must be a compiler-generated temporary (__mt)
+    let Some(name) = get_variable_name(expr, var_id) else {
+        return false;
+    };
+
+    name.as_str().starts_with("__mt")
 }
 
 struct ElseEliminator<'a> {
@@ -123,7 +128,12 @@ impl<'a> ElseEliminator<'a> {
                     let Mir::Action(prev_ids) = &self.expr[children[i - 1]] else {
                         continue;
                     };
-                    if prev_ids.len() >= 4 && node_str_eq(&self.expr[prev_ids[0]], "variable") {
+                    if prev_ids.len() >= 2
+                        && let (Mir::Str(obj), Mir::Str(name)) =
+                            (&self.expr[prev_ids[0]], &self.expr[prev_ids[1]])
+                        && (crate::ir::schema::is_boolean_action(obj.0.as_str(), name.0.as_str())
+                            || obj.0.as_str() == "variable")
+                    {
                         to_remove.insert(child);
                     }
                 }

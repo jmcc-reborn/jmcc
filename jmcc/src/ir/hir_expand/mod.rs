@@ -135,6 +135,7 @@ pub struct OverloadExpander<'a> {
     /// overloads (`f` → `a + b` → `__add__` → `f`), which the inliner cannot see.
     inline_stack: Vec<Symbol>,
     cache: HashMap<Id, Id>,
+    default_scope: VarScope,
 }
 
 /// Common emitter interface: delegates to inherent `add` / arena / `fresh`.
@@ -178,8 +179,14 @@ impl<'a> OverloadExpander<'a> {
         types: &'a HashMap<ExprId, Type>,
         ctx: &'a mut IrCtx,
         src: &'a RecExpr<Hir>,
+        edition: u16,
     ) -> Self {
         let temp_n = find_max_ht_index(src);
+        let default_scope = if edition < 2026 {
+            VarScope::Local
+        } else {
+            VarScope::Line
+        };
         Self {
             ast,
             ctx,
@@ -192,6 +199,7 @@ impl<'a> OverloadExpander<'a> {
             inline_return_var: None,
             inline_stack: Vec::new(),
             cache: HashMap::new(),
+            default_scope,
         }
     }
 
@@ -368,8 +376,9 @@ pub fn expand_overloads(
     types: &HashMap<ExprId, Type>,
     ctx: &mut IrCtx,
     hir: &RecExpr<Hir>,
+    edition: u16,
 ) -> Result<RecExpr<Hir>> {
     info!("Building OverloadExpander and running");
-    let expander = OverloadExpander::new(ast, types, ctx, hir);
+    let expander = OverloadExpander::new(ast, types, ctx, hir, edition);
     expander.expand()
 }
